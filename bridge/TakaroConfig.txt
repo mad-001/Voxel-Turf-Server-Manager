@@ -1,9 +1,0 @@
-# VoxelTurf Takaro Bridge Configuration
-# Copy this file and fill in your tokens from the Takaro dashboard.
-
-# Give your server any name you want
-SERVER_NAME=GIVE YOUR SERVER ANY NAME YOU WANT TO
-REGISTRATION_TOKEN=your_registration_token_here
-
-# HTTP port this bridge listens on (must match BRIDGE_URL in TakaroConnector.cfg)
-HTTP_PORT=3003
