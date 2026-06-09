@@ -1,0 +1,7 @@
+# TakaroConnector Configuration
+# Edit BRIDGE_URL to point to where the VoxelTurf-Bridge is running
+# On the game server: bridge and game are on same machine, use localhost
+
+BRIDGE_URL=http://127.0.0.1:3003
+POLL_INTERVAL=2
+ENABLED=true

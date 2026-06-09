@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voxel Turf Server Manager</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #e0e0e0;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: rgba(20, 28, 38, 0.97);
+            padding: 40px;
+            border-radius: 15px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+        }
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 8px;
+            background: linear-gradient(135deg, #38bdf8 0%, #7dd3fc 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .subtitle {
+            color: #94a3b8;
+            font-size: 1.05em;
+            margin-bottom: 28px;
+        }
+        h2 {
+            font-size: 1.5em;
+            margin-top: 38px;
+            margin-bottom: 14px;
+            color: #38bdf8;
+            border-bottom: 2px solid rgba(56, 189, 248, 0.25);
+            padding-bottom: 8px;
+        }
+        h3 {
+            font-size: 1.15em;
+            margin-top: 22px;
+            margin-bottom: 10px;
+            color: #7dd3fc;
+        }
+        p { margin-bottom: 12px; line-height: 1.75; }
+        .btn {
+            display: inline-block;
+            background: linear-gradient(135deg, #0369a1 0%, #0ea5e9 100%);
+            color: white;
+            padding: 13px 26px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            margin: 12px 10px 22px 0;
+            box-shadow: 0 4px 15px rgba(14, 165, 233, 0.35);
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(14, 165, 233, 0.5);
+        }
+        .btn-secondary {
+            background: linear-gradient(135deg, #1e3a5f 0%, #1d4ed8 100%);
+            box-shadow: 0 4px 15px rgba(29, 78, 216, 0.3);
+        }
+        code {
+            background: rgba(0, 0, 0, 0.35);
+            color: #fbbf24;
+            padding: 2px 7px;
+            border-radius: 4px;
+            font-family: 'Cascadia Code', 'Courier New', monospace;
+            font-size: 0.88em;
+        }
+        pre {
+            background: rgba(0, 0, 0, 0.45);
+            padding: 16px 20px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 12px 0 18px;
+            border: 1px solid rgba(56, 189, 248, 0.15);
+            line-height: 1.55;
+        }
+        pre code { background: none; padding: 0; color: #e2e8f0; font-size: 0.9em; }
+        ol, ul { margin: 10px 0 14px 26px; }
+        li { margin-bottom: 9px; line-height: 1.65; }
+        a { color: #38bdf8; text-decoration: none; }
+        a:hover { color: #7dd3fc; text-decoration: underline; }
+        .info-box {
+            background: rgba(14, 165, 233, 0.08);
+            border-left: 4px solid #0ea5e9;
+            padding: 14px 16px;
+            margin: 18px 0;
+            border-radius: 0 6px 6px 0;
+            line-height: 1.7;
+        }
+        .warning-box {
+            background: rgba(239, 68, 68, 0.08);
+            border-left: 4px solid #ef4444;
+            padding: 14px 16px;
+            margin: 18px 0;
+            border-radius: 0 6px 6px 0;
+            line-height: 1.7;
+        }
+        .note-box {
+            background: rgba(251, 191, 36, 0.08);
+            border-left: 4px solid #fbbf24;
+            padding: 14px 16px;
+            margin: 18px 0;
+            border-radius: 0 6px 6px 0;
+            line-height: 1.7;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 14px 0 20px; }
+        th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid rgba(56, 189, 248, 0.12); }
+        th { color: #7dd3fc; font-size: 0.9em; background: rgba(56, 189, 248, 0.05); }
+        td code { font-size: 0.83em; }
+        .feature-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 14px;
+            margin: 20px 0;
+        }
+        .feature-card {
+            background: rgba(56, 189, 248, 0.06);
+            border: 1px solid rgba(56, 189, 248, 0.15);
+            border-radius: 8px;
+            padding: 14px 16px;
+        }
+        .feature-card strong { color: #7dd3fc; display: block; margin-bottom: 4px; }
+        @media (max-width: 600px) { .feature-grid { grid-template-columns: 1fr; } h1 { font-size: 1.9em; } }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Voxel Turf Server Manager</h1>
+    <p class="subtitle">Connect your Voxel Turf server to <a href="https://takaro.io/pricing/?via=zach550">Takaro</a> — Discord chat bridge, server announcements, and admin control from the Takaro dashboard.</p>
+
+    <a href="https://github.com/mad-001/Voxel-Turf-Server-Manager/releases/latest" class="btn">Download Latest Release</a>
+    <a href="https://takaro.io/pricing/?via=zach550" class="btn btn-secondary">Sign Up for Takaro (Free)</a>
+
+    <div class="feature-grid">
+        <div class="feature-card">
+            <strong>Chat Bridge</strong>
+            Player chat forwarded to Takaro in real time. Reply from the dashboard or Discord.
+        </div>
+        <div class="feature-card">
+            <strong>Player Events</strong>
+            Join, leave, and death events automatically tracked in Takaro.
+        </div>
+        <div class="feature-card">
+            <strong>Admin Actions</strong>
+            Kick, ban, broadcast messages, and give items directly from Takaro.
+        </div>
+        <div class="feature-card">
+            <strong>Server-Side Only</strong>
+            No client mod required. Loaded as a plain Voxel Turf server mod.
+        </div>
+    </div>
+
+    <h2>How It Works</h2>
+    <pre><code>Voxel Turf Server                    Bridge (Node.js)           Takaro
+┌──────────────────────────┐         ┌────────────────────┐    ┌──────────────┐
+│ TakaroConnector Lua mod  │         │ VoxelTurf-Bridge   │    │ Takaro Cloud │
+│  · player events         │──HTTP──▶│  · WebSocket client│──▶│ wss://connect│
+│  · chat capture          │◀──HTTP──│  · command queue   │◀──│  .takaro.io/ │
+│  · kick / ban / give     │         │  · player cache    │    │              │
+└──────────────────────────┘         └────────────────────┘    └──────────────┘</code></pre>
+    <p>The Lua mod runs inside your Voxel Turf server and communicates with a small Node.js bridge process running on the same machine. The bridge maintains the persistent WebSocket connection to Takaro and translates between the two protocols.</p>
+
+    <h2>Step 1 — Get a Takaro Account</h2>
+    <ol>
+        <li>Go to <a href="https://takaro.io/pricing/?via=zach550">takaro.io/pricing</a> and pick a plan.</li>
+        <li>Sign up and confirm your email, then log in at <code>app.takaro.io</code>.</li>
+    </ol>
+
+    <h2>Step 2 — Register Your Server in Takaro</h2>
+    <ol>
+        <li>In the Takaro dashboard, click <strong>Game Servers</strong> → <strong>Create Game Server</strong>.</li>
+        <li>Choose <strong>Generic</strong> as the server type.</li>
+        <li>Give the server any name you like.</li>
+        <li>Takaro will generate a <strong>Registration Token</strong>. Copy it — you'll paste it into the config in Step 4.</li>
+    </ol>
+
+    <h2>Step 3 — Install the Mod</h2>
+    <p>Download the latest release ZIP and extract it. Inside you'll find a folder named <code>TakaroConnector</code>. Copy that entire folder into your Voxel Turf server's <code>mods\</code> directory:</p>
+    <pre><code>C:\path\to\voxelturf\server\
+├── mods\
+│   └── TakaroConnector\           &lt;-- copy here
+│       ├── scripts\
+│       │   ├── server_scripts.txt
+│       │   └── server\
+│       │       └── takaro_connector.lua
+│       └── TakaroConfig.txt
+└── VoxelTurf.exe                  (already there)</code></pre>
+
+    <h2>Step 4 — Configure the Mod</h2>
+    <p>Open <code>mods\TakaroConnector\TakaroConfig.txt</code> and fill in two fields:</p>
+    <pre><code>BRIDGE_URL=http://127.0.0.1:3003
+POLL_INTERVAL=2
+ENABLED=true</code></pre>
+    <p>Leave <code>BRIDGE_URL</code> as-is if the bridge runs on the same machine as the game server (the default). The mod reads this file on every server start.</p>
+
+    <h2>Step 5 — Configure and Start the Bridge</h2>
+    <p>From the release ZIP, copy the <code>VoxelTurf-Bridge</code> folder anywhere on your server (or the same machine). Open <code>TakaroConfig.txt</code> inside it:</p>
+    <pre><code>SERVER_NAME=My Voxel Turf Server
+REGISTRATION_TOKEN=paste-your-token-from-step-2-here
+HTTP_PORT=3003</code></pre>
+    <table>
+        <tr><th>Key</th><th>Required?</th><th>Description</th></tr>
+        <tr><td><code>SERVER_NAME</code></td><td>Yes</td><td>Any name — used as the identity with Takaro.</td></tr>
+        <tr><td><code>REGISTRATION_TOKEN</code></td><td>Yes</td><td>Token copied from the Takaro dashboard in Step 2.</td></tr>
+        <tr><td><code>HTTP_PORT</code></td><td>Optional</td><td>Local port the bridge listens on. Must match <code>BRIDGE_URL</code> in the mod config. Default <code>3003</code>.</td></tr>
+    </table>
+
+    <div class="note-box">
+        <strong>Node.js required.</strong> The bridge needs Node.js 18 or newer. Download it free at <a href="https://nodejs.org">nodejs.org</a>. After installing Node, double-click <code>start.bat</code> inside the <code>VoxelTurf-Bridge</code> folder — it installs dependencies and starts the bridge automatically.
+    </div>
+
+    <p>To start the bridge: double-click <code>start.bat</code>. Keep the window open while the server runs. To stop it: close the window or double-click <code>stop.bat</code>.</p>
+
+    <h2>Step 6 — Start Your Voxel Turf Server</h2>
+    <p>Start your Voxel Turf server normally. The mod loads automatically because it's in the <code>mods\</code> folder — no launch-flag changes needed. You should see this line in the server console shortly after startup:</p>
+    <pre><code>[TakaroConnector] Started. Bridge: http://127.0.0.1:3003</code></pre>
+
+    <h2>Step 7 — Verify It's Working</h2>
+    <ol>
+        <li>In the bridge window, look for: <code>Identified with Takaro</code> and <code>HTTP server listening on http://127.0.0.1:3003</code>.</li>
+        <li>Refresh your server's page in the Takaro dashboard — the <strong>Reachable</strong> indicator should turn green within a few seconds.</li>
+        <li>Have a player join. A <code>player-connected</code> event should appear in Takaro's event stream.</li>
+        <li>Type in chat — it should appear in Takaro as a <code>chat-message</code> event.</li>
+    </ol>
+
+    <div class="info-box">
+        <strong>Admin status command.</strong> Once in-game, any admin can type <code>/takarostatus</code> in chat to get a status report from the mod (bridge URL, number of tracked players, tick count).
+    </div>
+
+    <h2>Available Takaro Actions</h2>
+    <table>
+        <tr><th>Action</th><th>What it does</th></tr>
+        <tr><td><code>testReachability</code></td><td>Returns immediately — verifies the bridge is reachable</td></tr>
+        <tr><td><code>getPlayers</code></td><td>Returns the current online player list</td></tr>
+        <tr><td><code>sendMessage</code></td><td>Broadcasts a server message to all players</td></tr>
+        <tr><td><code>sendMessageToPlayer</code></td><td>Sends a private message to one player</td></tr>
+        <tr><td><code>kickPlayer</code></td><td>Kicks a player by their game ID</td></tr>
+        <tr><td><code>banPlayer</code></td><td>Bans a player from the server</td></tr>
+        <tr><td><code>unbanPlayer</code></td><td>Removes a player's ban</td></tr>
+        <tr><td><code>giveItem</code></td><td>Adds an item to a player's inventory</td></tr>
+        <tr><td><code>teleportPlayer</code></td><td>Teleports a player to X/Z coordinates</td></tr>
+        <tr><td><code>executeCommand</code></td><td>Dispatches a console command</td></tr>
+    </table>
+
+    <h2>Events Sent to Takaro</h2>
+    <table>
+        <tr><th>Event</th><th>When it fires</th></tr>
+        <tr><td><code>player-connected</code></td><td>A player logs into the server</td></tr>
+        <tr><td><code>player-disconnected</code></td><td>A player leaves (detected on the next roster scan, ~2s delay)</td></tr>
+        <tr><td><code>chat-message</code></td><td>A player sends a public chat message</td></tr>
+        <tr><td><code>player-death</code></td><td>A player's death counter increases</td></tr>
+    </table>
+
+    <h2>Troubleshooting</h2>
+
+    <h3>Mod line doesn't appear in the server console</h3>
+    <p>Confirm the mod folder structure is exactly as shown in Step 3. In particular, check that <code>server_scripts.txt</code> exists inside <code>TakaroConnector\scripts\</code> — this is the file the engine scans to find mod scripts.</p>
+
+    <h3>Bridge connects but Takaro says "Unreachable"</h3>
+    <ul>
+        <li>Confirm <code>REGISTRATION_TOKEN</code> in the bridge config matches the token shown in the Takaro dashboard.</li>
+        <li>Outbound HTTPS to <code>connect.takaro.io:443</code> must not be blocked by your firewall or hosting provider.</li>
+        <li>If the registration token was already consumed, regenerate it in the Takaro dashboard.</li>
+    </ul>
+
+    <h3>Bridge starts but the mod can't reach it</h3>
+    <ul>
+        <li>Confirm <code>HTTP_PORT</code> in the bridge config matches the port in <code>BRIDGE_URL</code> in the mod config.</li>
+        <li>If the bridge is on a different machine, replace <code>127.0.0.1</code> in <code>BRIDGE_URL</code> with the bridge machine's LAN IP.</li>
+        <li>Windows Firewall may block inbound connections on port 3003 — add an inbound rule to allow it.</li>
+    </ul>
+
+    <h3>Server console shows <code>[TakaroConnector] INIT ERROR</code></h3>
+    <p>This means the Lua mod crashed during initialization — usually a missing API. Check the error text after the colon and open a GitHub issue with the full line.</p>
+
+    <h3>Anything else</h3>
+    <p>Open an issue at <a href="https://github.com/mad-001/Voxel-Turf-Server-Manager/issues">github.com/mad-001/Voxel-Turf-Server-Manager/issues</a> and include the bridge log (<code>voxelturf-bridge.log</code> in the bridge folder) and your server console output.</p>
+</div>
+</body>
+</html>
