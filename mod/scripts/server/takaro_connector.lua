@@ -497,14 +497,28 @@ end)
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Initialize
 -- ─────────────────────────────────────────────────────────────────────────────
+local function startBridge()
+    -- bridge.js lives inside the mod folder; start it as a background process
+    -- The path is relative to the game working directory
+    local bridgeScript = "mods\\TakaroConnector\\bridge\\bridge.js"
+    local bridgeLog    = "mods\\TakaroConnector\\bridge.log"
+    local cmd = 'start /B "" cmd /c "node ' .. bridgeScript ..
+                ' >> ' .. bridgeLog .. ' 2>&1"'
+    local ok = pcall(function() os.execute(cmd) end)
+    if ok then
+        turf.printc("[TakaroConnector] Bridge started (node " .. bridgeScript .. ")")
+    else
+        turf.printc("[TakaroConnector] Warning: could not start bridge (is Node.js installed?)")
+    end
+end
+
 local function init()
     local ok, err = pcall(function()
         loadConfig()
         if TC.enabled then
+            startBridge()
             turf.printc("[TakaroConnector] Started. Bridge: " .. TC.BRIDGE_URL)
-            -- Kick off first poll
             startPoll()
-            -- Log event to bridge so it knows we're alive
             sendEvent("log", {msg = "TakaroConnector started"})
         else
             turf.printc("[TakaroConnector] Disabled (ENABLED=false in config)")
