@@ -1,4 +1,4 @@
-// VoxelTurf Takaro Bridge v2.2.0
+// VoxelTurf Takaro Bridge v2.2.1
 // Uses VoxelTurf N_EXTERNAL UDP API — no HTTP server needed.
 // Launched by winmm.dll / takaro.dll (via the version.dll proxy) with the game PID as argv[1].
 // Monitors game PID and exits immediately when the game process dies.
@@ -125,6 +125,16 @@ udp.on('error', err => log('UDP error: ' + err.message));
 let consecutiveTimeouts = 0;
 const MAX_TIMEOUTS = 6; // 6 × 5s = 30s of silence → assume game stopped
 
+// VoxelTurf reports the 32-bit Steam account id; Takaro expects the full SteamID64.
+// SteamID64 = accountId + 76561197960265728. Use BigInt — the value exceeds 2^53.
+const STEAM64_BASE = 76561197960265728n;
+function toSteamId64(acct) {
+  const s = String(acct == null ? '' : acct).trim();
+  if (!/^\d+$/.test(s)) return s || undefined;          // non-numeric -> leave as-is
+  const n = BigInt(s);
+  return (n < STEAM64_BASE ? n + STEAM64_BASE : n).toString();  // already a 64? leave it
+}
+
 async function poll() {
   try {
     const res = await udpRequest({ type: 'poll' });
@@ -136,6 +146,7 @@ async function poll() {
 
     // Update player cache — Lua JSON encoder may return {} for empty arrays
     const players = Array.isArray(res.players) ? res.players : Object.values(res.players || {});
+    players.forEach(p => { if (p && p.steamId) p.steamId = toSteamId64(p.steamId); });
     playerCache.clear();
     players.forEach(p => playerCache.set(p.gameId, p));
 
@@ -144,6 +155,7 @@ async function poll() {
     events.forEach(ev => {
       if (!ev || !ev.type) return;
       const d = ev.data || {};
+      if (d.player && d.player.steamId) d.player.steamId = toSteamId64(d.player.steamId);
       if (ev.type === 'player-connected' && d.player)
         playerCache.set(d.player.gameId, d.player);
       if (ev.type === 'player-disconnected' && d.player)
@@ -391,4 +403,4 @@ connect();
 process.on('SIGINT',  () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-log('VoxelTurf Takaro Bridge v2.2.0 started (UDP mode, game=' + GAME_HOST + ':' + GAME_PORT + ', secret=' + EXTERNAL_SECRET + ') — hooks: start/stop/save/join/leave/chat/death/inventory');
+log('VoxelTurf Takaro Bridge v2.2.1 started (UDP mode, game=' + GAME_HOST + ':' + GAME_PORT + ', secret=' + EXTERNAL_SECRET + ') — hooks: start/stop/save/join/leave/chat/death/inventory');
