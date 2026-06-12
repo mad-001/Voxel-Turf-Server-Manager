@@ -21,71 +21,21 @@ EXTERNAL_SECRET=123456
 ENABLED=true
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-#                          FULL SETUP INSTRUCTIONS
-# ═════════════════════════════════════════════════════════════════════════════
+# ─────────────────────────────────────────────────────────────────────────────
+# QUICK START
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. Create a Takaro account.
+# 2. Click on Game servers, Game Server Actions, Create new game server.
+# 3. Change the Game Server Type to Generic.
+# 4. Click the copy button at the end of your registration token.
+# 5. Download the latest release and extract the ZIP straight into your Voxel
+#    Turf server folder. This drops two things into place:
+#      - winmm.dll in the server root (this auto-starts the bridge), and
+#      - mods/TakaroConnector/ (the Lua mod + bridge).
+# 6. Edit mods/TakaroConnector/TakaroConfig.txt -> set SERVER_NAME and paste
+#    your REGISTRATION_TOKEN.
+# 7. Start your Voxel Turf server. The mod and bridge load automatically.
+# 8. Within a few seconds your server shows online in Takaro.
 #
-# Everything below is a comment (starts with #) and is ignored by the mod.
-# Online guide: https://mad-001.github.io/Voxel-Turf-Server-Manager/
-#
-# ── REQUIREMENT: Voxel Turf 1.9.9 BETA ──────────────────────────────────────
-# This mod ONLY works on the 1.9.9 beta build of the dedicated server. On 1.9.8
-# stable the server runs but Takaro never connects (the bridge logs nothing but
-# "UDP timeout"). Put your server on the beta with SteamCMD (app id 526340):
-#
-#     force_install_dir C:\path\to\your\voxelturf\server
-#     login anonymous
-#     app_update 526340 -beta beta
-#     quit
-#
-# The "beta" branch ("Public Beta") is 1.9.9 — no password. Run it WITHOUT
-# "validate" so it leaves the mod files alone. A normal update without
-# "-beta beta" reverts you to 1.9.8 and breaks the mod, so always pin -beta beta.
-#
-# ── STEP 1: Takaro account + registration token ─────────────────────────────
-#   1. Sign up at https://takaro.io and log in at https://app.takaro.io
-#   2. Game Servers  ->  Game Server Actions  ->  Create new game server
-#   3. Set the Game Server Type to "Generic"
-#   4. Copy the Registration Token it shows you
-#
-# ── STEP 2: Files are already in place ──────────────────────────────────────
-# If you extracted the release ZIP into your server folder you already have:
-#     <server root>\winmm.dll                         (starts the bridge)
-#     <server root>\mods\TakaroConnector\             (this mod)
-# winmm.dll MUST sit next to vtserver.exe (the server root), NOT inside mods\.
-#
-# ── STEP 3: Fill in the values at the top of this file ──────────────────────
-#   SERVER_NAME         any name you like
-#   REGISTRATION_TOKEN  the token you copied in Step 1
-#   GAME_PORT           your server's UDP port (5728 unless you use --port)
-# Save the file.
-#
-# ── STEP 4: Start your Voxel Turf server ────────────────────────────────────
-# Start it normally. The mod and the bridge load automatically — there is no
-# separate program to run and Node.js is NOT required (the bridge is a
-# self-contained bridge.exe). Within a few seconds your server shows online in
-# the Takaro dashboard.
-#
-# ── HOW TO TELL IT'S WORKING ────────────────────────────────────────────────
-#   * Server console:  [TC] takaro_connector.lua loaded OK
-#                      [TC] defineExternalCommands callback called
-#   * mods\TakaroConnector\bridge.log:  "Identified with Takaro"
-#                                       "VoxelTurf server started"
-#     and NO repeating "UDP timeout" lines.
-#   * The server turns online/reachable in app.takaro.io.
-#   * In game, an admin can type  /takarostatus  for a status report.
-#
-# ── TROUBLESHOOTING ─────────────────────────────────────────────────────────
-#   bridge.log shows endless "UDP timeout"   -> you're on 1.9.8, not the 1.9.9
-#                                               beta. Redo the beta step above.
-#   No bridge.log appears at all             -> winmm.dll isn't in the server
-#                                               root, or antivirus quarantined
-#                                               bridge.exe (allow it).
-#   Connected but Takaro says "Unreachable"  -> wrong/expired REGISTRATION_TOKEN,
-#                                               or outbound HTTPS to
-#                                               connect.takaro.io:443 is blocked.
-#
-# ── SUPPORT ─────────────────────────────────────────────────────────────────
-# Issues: https://github.com/mad-001/Voxel-Turf-Server-Manager/issues
-# Include your bridge.log and server console output.
-# ═════════════════════════════════════════════════════════════════════════════
+# That's it — no separate program to launch, no client mod.
+# ─────────────────────────────────────────────────────────────────────────────
