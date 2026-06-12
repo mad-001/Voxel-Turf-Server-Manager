@@ -13,13 +13,16 @@ That's the whole list — **no Node.js, no runtime, nothing else to install.** T
 
 ## Quick Start
 
-1. [Create a Takaro account](https://takaro.io/pricing/?via=zach550), add a **Generic** game server, and copy its **Registration Token**.
-2. [Download the latest release](https://github.com/mad-001/Voxel-Turf-Server-Manager/releases/latest) and **extract the ZIP straight into your Voxel Turf server folder**. This drops two things into place:
+1. [Create a Takaro account](https://takaro.io/pricing/?via=zach550)
+2. Click on Game servers, Game Server Actions, Create new game server.
+3. Change the **Game Server Type** to __Generic__.
+4. Click the copy button at the end of your registration token.
+5. [Download the latest release](https://github.com/mad-001/Voxel-Turf-Server-Manager/releases/latest) and **extract the ZIP straight into your Voxel Turf server folder**. This drops two things into place:
    - `winmm.dll` in the server **root** (this auto-starts the bridge), and
    - `mods/TakaroConnector/` (the Lua mod + bridge).
-3. Edit `mods/TakaroConnector/TakaroConfig.txt` → set `SERVER_NAME` and paste your `REGISTRATION_TOKEN`.
-4. Start your Voxel Turf server. The mod and bridge load automatically.
-5. Within a few seconds your server shows **online** in Takaro. ✅
+6. Edit `mods/TakaroConnector/TakaroConfig.txt` → set `SERVER_NAME` and paste your `REGISTRATION_TOKEN`.
+7. Start your Voxel Turf server. The mod and bridge load automatically.
+8. Within a few seconds your server shows **online** in Takaro. ✅
 
 That's it — no separate program to launch, no client mod.
 
