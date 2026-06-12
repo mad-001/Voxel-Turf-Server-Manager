@@ -1,16 +1,13 @@
--- TakaroConnector v1.0.0
--- VoxelTurf <-> Takaro integration via HTTP bridge
--- Events: player-connected, player-disconnected, chat-message, player-death
--- Actions: sendMessage, executeCommand, kickPlayer, banPlayer, unbanPlayer, giveItem, getPlayers
+-- TakaroConnector v2.0.0
+-- VoxelTurf <-> Takaro via N_EXTERNAL UDP API
+-- No curl. No HTTP. Pure UDP: bridge polls game, game responds with queued events.
 
 local TC = {
-    BRIDGE_URL   = "http://127.0.0.1:3003",
-    CONFIG_FILE  = "mods/TakaroConnector/TakaroConfig.txt",
-    enabled      = false,
-    knownPlayers = {},   -- gameId -> {gameId, name, steamId, deaths, kills}
-    tickCount    = 0,
-    eventSeq     = 0,
-    tempDir      = nil,
+    EXTERNAL_SECRET = 123456,   -- must match bridge EXTERNAL_SECRET
+    enabled         = true,
+    knownPlayers    = {},       -- gameId -> {gameId, name, steamId, deaths, kills}
+    eventQueue      = {},       -- pending events to send on next poll
+    tickCount       = 0,
 }
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -51,199 +48,81 @@ local function jsonEncodeVal(v, d)
         end
     else return '"[' .. t .. ']"' end
 end
-
 local function jsonEncode(v) return jsonEncodeVal(v, 0) end
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- JSON decoder (recursive descent, handles all standard types)
+-- JSON decoder
 -- ─────────────────────────────────────────────────────────────────────────────
-local function jSkip(s, i)
-    while i <= #s and s:sub(i,i):match("%s") do i = i + 1 end
-    return i
-end
-
-local function jStr(s, i)
-    i = i + 1
-    local r = {}
-    while i <= #s do
-        local c = s:sub(i,i)
-        if c == '"' then return table.concat(r), i + 1
-        elseif c == '\\' then
-            i = i + 1; local e = s:sub(i,i)
-            if     e == '"'  then r[#r+1] = '"'
-            elseif e == '\\' then r[#r+1] = '\\'
-            elseif e == 'n'  then r[#r+1] = '\n'
-            elseif e == 'r'  then r[#r+1] = '\r'
-            elseif e == 't'  then r[#r+1] = '\t'
-            elseif e == '/'  then r[#r+1] = '/'
-            else                  r[#r+1] = e end
-        else r[#r+1] = c end
-        i = i + 1
+local function jSkip(s,i) while i<=#s and s:sub(i,i):match("%s") do i=i+1 end return i end
+local function jStr(s,i)
+    i=i+1; local r={}
+    while i<=#s do
+        local c=s:sub(i,i)
+        if c=='"' then return table.concat(r),i+1
+        elseif c=='\\' then
+            i=i+1; local e=s:sub(i,i)
+            if e=='"' then r[#r+1]='"' elseif e=='\\' then r[#r+1]='\\'
+            elseif e=='n' then r[#r+1]='\n' elseif e=='r' then r[#r+1]='\r'
+            elseif e=='t' then r[#r+1]='\t' else r[#r+1]=e end
+        else r[#r+1]=c end
+        i=i+1
     end
-    return table.concat(r), i
+    return table.concat(r),i
 end
-
-local jVal  -- forward declare
-
-local function jObj(s, i)
-    i = i + 1; local r = {}
-    i = jSkip(s, i)
-    if s:sub(i,i) == '}' then return r, i + 1 end
-    while i <= #s do
-        i = jSkip(s, i)
-        if s:sub(i,i) ~= '"' then break end
-        local k, ni = jStr(s, i); i = ni
-        i = jSkip(s, i)
-        if s:sub(i,i) == ':' then i = i + 1 end
-        i = jSkip(s, i)
-        local val, vi = jVal(s, i); r[k] = val; i = vi
-        i = jSkip(s, i)
-        local ch = s:sub(i,i)
-        if ch == ',' then i = i + 1
-        elseif ch == '}' then return r, i + 1
-        else break end
+local jVal
+local function jObj(s,i)
+    i=i+1; local r={}; i=jSkip(s,i)
+    if s:sub(i,i)=='}' then return r,i+1 end
+    while i<=#s do
+        i=jSkip(s,i); if s:sub(i,i)~='"' then break end
+        local k,ni=jStr(s,i); i=ni; i=jSkip(s,i)
+        if s:sub(i,i)==':' then i=i+1 end; i=jSkip(s,i)
+        local val,vi=jVal(s,i); r[k]=val; i=vi; i=jSkip(s,i)
+        local ch=s:sub(i,i)
+        if ch==',' then i=i+1 elseif ch=='}' then return r,i+1 else break end
     end
-    return r, i
+    return r,i
 end
-
-local function jArr(s, i)
-    i = i + 1; local r = {}
-    i = jSkip(s, i)
-    if s:sub(i,i) == ']' then return r, i + 1 end
-    while i <= #s do
-        i = jSkip(s, i)
-        local val, vi = jVal(s, i); r[#r+1] = val; i = vi
-        i = jSkip(s, i)
-        local ch = s:sub(i,i)
-        if ch == ',' then i = i + 1
-        elseif ch == ']' then return r, i + 1
-        else break end
+local function jArr(s,i)
+    i=i+1; local r={}; i=jSkip(s,i)
+    if s:sub(i,i)==']' then return r,i+1 end
+    while i<=#s do
+        i=jSkip(s,i); local val,vi=jVal(s,i); r[#r+1]=val; i=vi; i=jSkip(s,i)
+        local ch=s:sub(i,i)
+        if ch==',' then i=i+1 elseif ch==']' then return r,i+1 else break end
     end
-    return r, i
+    return r,i
 end
-
-jVal = function(s, i)
-    i = jSkip(s, i)
-    local c = s:sub(i,i)
-    if c == '"' then return jStr(s, i)
-    elseif c == '{' then return jObj(s, i)
-    elseif c == '[' then return jArr(s, i)
-    elseif s:sub(i,i+3) == 'true'  then return true,  i + 4
-    elseif s:sub(i,i+4) == 'false' then return false, i + 5
-    elseif s:sub(i,i+3) == 'null'  then return nil,   i + 4
+jVal = function(s,i)
+    i=jSkip(s,i); local c=s:sub(i,i)
+    if c=='"' then return jStr(s,i)
+    elseif c=='{' then return jObj(s,i)
+    elseif c=='[' then return jArr(s,i)
+    elseif s:sub(i,i+3)=='true'  then return true, i+4
+    elseif s:sub(i,i+4)=='false' then return false,i+5
+    elseif s:sub(i,i+3)=='null'  then return nil,  i+4
     else
-        local ns = s:match("^-?%d+%.?%d*[eE]?[+-]?%d*", i)
-        if ns then return tonumber(ns), i + #ns end
+        local ns=s:match("^-?%d+%.?%d*[eE]?[+-]?%d*",i)
+        if ns then return tonumber(ns),i+#ns end
     end
-    return nil, i + 1
+    return nil,i+1
 end
-
 local function jsonDecode(s)
-    if not s or s == "" then return nil end
-    local ok, result = pcall(function()
-        local v, _ = jVal(s, 1)
-        return v
-    end)
+    if not s or s=="" then return nil end
+    local ok,result=pcall(function() local v,_=jVal(s,1); return v end)
     return ok and result or nil
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- Config
+-- Event queue
 -- ─────────────────────────────────────────────────────────────────────────────
-local function loadConfig()
-    local f = io.open(TC.CONFIG_FILE, "r")
-    if not f then
-        turf.printc("[TakaroConnector] Config not found at " .. TC.CONFIG_FILE .. " - using defaults, ENABLED=true")
-        TC.enabled = true
-        return
-    end
-    for line in f:lines() do
-        line = line:match("^%s*(.-)%s*$")
-        if line ~= "" and line:sub(1,1) ~= "#" then
-            local k, v = line:match("^([^=]+)=(.*)$")
-            if k and v then
-                k = k:match("^%s*(.-)%s*$")
-                v = v:match("^%s*(.-)%s*$")
-                if k == "BRIDGE_URL" then TC.BRIDGE_URL = v
-                elseif k == "ENABLED" then TC.enabled = (v == "true" or v == "1")
-                end
-            end
-        end
-    end
-    f:close()
-    TC.enabled = true
-end
-
--- ─────────────────────────────────────────────────────────────────────────────
--- HTTP helpers (all via curl, async where possible)
--- ─────────────────────────────────────────────────────────────────────────────
-local function getTempDir()
-    if TC.tempDir then return TC.tempDir end
-    TC.tempDir = os.getenv("TEMP") or os.getenv("TMP") or "C:\\Windows\\Temp"
-    return TC.tempDir
-end
-
--- Fire-and-forget async POST (writes JSON to temp file, spawns curl detached)
-local function postAsync(endpoint, payload)
-    local ok, err = pcall(function()
-        TC.eventSeq = TC.eventSeq + 1
-        local tmp = getTempDir() .. "\\vt_tc_" .. TC.eventSeq .. ".json"
-        local f = io.open(tmp, "w")
-        if not f then return end
-        f:write(payload)
-        f:close()
-        -- start /B spawns curl as a detached process; does not block the tick
-        os.execute('start /B "" curl -s -m 5 -X POST -H "Content-Type: application/json" -d @"' ..
-            tmp .. '" ' .. TC.BRIDGE_URL .. endpoint .. ' >nul 2>&1')
-    end)
-    if not ok then turf.printc("[TakaroConnector] postAsync error: " .. tostring(err)) end
-end
-
--- Async poll: start curl writing to a known temp file; read file next call
-local POLL_TMP = nil
-local pollPending = false
-
-local function startPoll()
-    if POLL_TMP == nil then
-        POLL_TMP = getTempDir() .. "\\vt_tc_poll.txt"
-    end
-    -- Remove stale file before starting new request
-    pcall(function() os.remove(POLL_TMP) end)
-    pollPending = true
-    os.execute('start /B "" curl -s -m 4 -o "' .. POLL_TMP .. '" ' ..
-        TC.BRIDGE_URL .. '/poll 2>nul')
-end
-
-local function readPollResult()
-    if not pollPending then return nil end
-    if POLL_TMP == nil then return nil end
-    local content = nil
-    local f = io.open(POLL_TMP, "r")
-    if f then
-        content = f:read("*all")
-        f:close()
-        if content == "" then content = nil end
-    end
-    -- Whether we got content or not, clear state so we start a new poll next time
-    pollPending = false
-    return content
-end
-
--- ─────────────────────────────────────────────────────────────────────────────
--- Event helpers
--- ─────────────────────────────────────────────────────────────────────────────
-local function sendEvent(evType, data)
+local function queueEvent(evType, data)
     if not TC.enabled then return end
-    postAsync("/event", jsonEncode({type = evType, data = data}))
-end
-
-local function sendResult(requestId, result)
-    if not TC.enabled or not requestId then return end
-    postAsync("/result", jsonEncode({requestId = requestId, result = result}))
+    TC.eventQueue[#TC.eventQueue + 1] = {type = evType, data = data}
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- Player data extraction
+-- Player data
 -- ─────────────────────────────────────────────────────────────────────────────
 local function getPlayerData(P)
     if not P then return nil end
@@ -259,113 +138,144 @@ local function getPlayerData(P)
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- Bridge command dispatcher
+-- Command handler (actions from bridge)
 -- ─────────────────────────────────────────────────────────────────────────────
-local function handleCommand(NH, cmd)
-    if not cmd then return end
-    local action    = cmd.action    or ""
-    local requestId = cmd.requestId or ""
-    local args      = cmd.args      or {}
-
+local function handleCommand(NH, action, args, requestId)
+    args = args or {}
     if action == "sendMessage" then
-        local msg = args.message or args.msg or ""
-        local ok = pcall(function() NH:broadcastSM("[Takaro] " .. msg, 0) end)
-        sendResult(requestId, {success = ok})
+        local ok = pcall(function() NH:broadcastSM("[Takaro] " .. (args.message or args.msg or ""), 0) end)
+        return {requestId = requestId, result = {success = ok}}
 
     elseif action == "sendMessageToPlayer" then
-        local gId = args.gameId or ""
-        local msg  = args.message or args.msg or ""
-        local ok = pcall(function() NH:messageSM("[Takaro] " .. msg, tonumber(gId)) end)
-        sendResult(requestId, {success = ok})
-
-    elseif action == "executeCommand" or action == "executeConsoleCommand" then
-        local rawCmd = args.command or ""
-        turf.printc("[TakaroConnector] executeCommand: " .. rawCmd)
-        -- Parse command and args
-        local parts = {}
-        for part in rawCmd:gmatch("%S+") do parts[#parts+1] = part end
-        local subcmd = parts[1] or ""
-        table.remove(parts, 1)
-        -- Try to run it through processCommand machinery
-        -- VoxelTurf doesn't expose a direct "run command as admin" API yet
-        -- Best effort: return a human-readable result
-        sendResult(requestId, {success = true, rawResult = "VoxelTurf: command dispatched: " .. rawCmd})
+        local ok = pcall(function() NH:messageSM("[Takaro] " .. (args.message or ""), tonumber(args.gameId)) end)
+        return {requestId = requestId, result = {success = ok}}
 
     elseif action == "kickPlayer" then
-        local gId = args.gameId or ""
-        local ok, err = pcall(function() NH:kickPlayer(tonumber(gId)) end)
-        sendResult(requestId, {success = ok, error = ok and nil or tostring(err)})
+        local ok,err = pcall(function() NH:kickPlayer(tonumber(args.gameId)) end)
+        return {requestId = requestId, result = {success = ok, error = ok and nil or tostring(err)}}
 
     elseif action == "banPlayer" then
-        local gId = args.gameId or ""
-        local ok, err = pcall(function() NH:banPlayer(tonumber(gId)) end)
-        sendResult(requestId, {success = ok, error = ok and nil or tostring(err)})
+        local ok,err = pcall(function() NH:banPlayer(tonumber(args.gameId)) end)
+        return {requestId = requestId, result = {success = ok, error = ok and nil or tostring(err)}}
 
     elseif action == "unbanPlayer" then
-        local gId = args.gameId or ""
-        local ok, err = pcall(function() NH:unbanPlayer(tonumber(gId)) end)
-        sendResult(requestId, {success = ok, error = ok and nil or tostring(err)})
+        local ok,err = pcall(function() NH:unbanPlayer(tonumber(args.gameId)) end)
+        return {requestId = requestId, result = {success = ok, error = ok and nil or tostring(err)}}
 
     elseif action == "giveItem" then
-        local gId   = args.gameId or ""
-        local item  = args.name   or args.item or ""
-        local qty   = tonumber(args.amount) or 1
-        local ok, err = pcall(function()
+        local gId = args.gameId or ""; local item = args.name or args.item or ""; local qty = tonumber(args.amount) or 1
+        local ok,err = pcall(function()
             local PC = NH:getPlayerContainer()
-            for i = 0, PC:getNPlayers() - 1 do
+            for i = 0, PC:getNPlayers()-1 do
                 local P = PC:getPlayer(i)
-                if P and tostring(P:getId()) == gId then
-                    P:getInventory():give(item, qty)
-                    return
-                end
+                if P and tostring(P:getId()) == gId then P:getInventory():give(item, qty); return end
             end
             error("player not found")
         end)
-        sendResult(requestId, {success = ok, error = ok and nil or tostring(err)})
+        return {requestId = requestId, result = {success = ok, error = ok and nil or tostring(err)}}
 
     elseif action == "teleportPlayer" then
         local gId = args.gameId or ""
-        local x   = tonumber(args.x) or 0
-        local z   = tonumber(args.z) or 0
-        local ok, err = pcall(function()
+        local ok,err = pcall(function()
             local PC = NH:getPlayerContainer()
-            for i = 0, PC:getNPlayers() - 1 do
+            for i = 0, PC:getNPlayers()-1 do
                 local P = PC:getPlayer(i)
-                if P and tostring(P:getId()) == gId then
-                    P:teleport2i(x, z)
-                    return
-                end
+                if P and tostring(P:getId()) == gId then P:teleport2i(tonumber(args.x) or 0, tonumber(args.z) or 0); return end
             end
             error("player not found")
         end)
-        sendResult(requestId, {success = ok, error = ok and nil or tostring(err)})
+        return {requestId = requestId, result = {success = ok, error = ok and nil or tostring(err)}}
+
+    elseif action == "executeCommand" or action == "executeConsoleCommand" then
+        turf.printc("[TakaroConnector] executeCommand: " .. (args.command or ""))
+        return {requestId = requestId, result = {success = true, rawResult = "dispatched: " .. (args.command or "")}}
 
     elseif action == "getPlayerLocation" then
-        -- VoxelTurf doesn't expose position read easily; return stub
-        sendResult(requestId, {x = 0, y = 0, z = 0})
+        return {requestId = requestId, result = {x = 0, y = 0, z = 0}}
 
     elseif action == "getPlayerInventory" then
-        sendResult(requestId, {})
+        local gId = tostring(args.gameId or "")
+        local items = {}
+        pcall(function()
+            local PC = NH:getPlayerContainer()
+            for i = 0, PC:getNPlayers()-1 do
+                local P = PC:getPlayer(i)
+                if P and tostring(P:getId()) == gId then
+                    local Inv = P:getInventory()
+                    if Inv then
+                        for s = 0, Inv:getSize()-1 do
+                            local I = Inv:getItemAt(s)
+                            if I ~= nil then
+                                local qok, qty = pcall(function() return Inv:get(s):getQuantity() end)
+                                qty = (qok and tonumber(qty)) or 0
+                                if qty > 0 then
+                                    local code = tostring(Inv:getItemIdentifierAt(s) or "")
+                                    local nm = code
+                                    local nok, n = pcall(function() return I:getName() end)
+                                    if nok and n and n ~= "" then nm = tostring(n) end
+                                    if code == "" then code = nm end
+                                    items[#items+1] = {name = nm, code = code, amount = qty}
+                                end
+                            end
+                        end
+                    end
+                    break
+                end
+            end
+        end)
+        return {requestId = requestId, result = items}
 
     elseif action == "listItems" then
-        sendResult(requestId, {})
+        return {requestId = requestId, result = {}}
 
     else
-        turf.printc("[TakaroConnector] Unknown action: " .. action)
-        sendResult(requestId, {success = false, error = "Unknown action: " .. action})
+        return {requestId = requestId, result = {success = false, error = "Unknown action: " .. tostring(action)}}
     end
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- Roster scan: detect disconnects + death events
+-- onExternalMessage — global function called by engine when bridge sends a UDP packet
+-- externalIpHandle has .host, .port, .id — pass back to NH:sendExternalMessage
+-- ─────────────────────────────────────────────────────────────────────────────
+function onExternalMessage(externalIpHandle, message)
+    local ok, err = pcall(function()
+        local NH = turf.NetworkHandler.getInstance()
+        local msg = jsonDecode(message)
+        if not msg then return end
+
+        if msg.type == "poll" then
+            local PC = NH:getPlayerContainer()
+            local players = {}
+            for i = 0, PC:getNPlayers()-1 do
+                local pok, P = pcall(function() return PC:getPlayer(i) end)
+                if pok and P then
+                    local data = getPlayerData(P)
+                    if data then
+                        players[#players+1] = {gameId=data.gameId, name=data.name, steamId=data.steamId}
+                    end
+                end
+            end
+            local response = jsonEncode({events = TC.eventQueue, players = players})
+            TC.eventQueue = {}
+            NH:sendExternalMessage(externalIpHandle, response)
+
+        elseif msg.type == "command" then
+            local result = handleCommand(NH, msg.action or "", msg.args, msg.requestId)
+            NH:sendExternalMessage(externalIpHandle, jsonEncode(result))
+        end
+    end)
+    if not ok then print("[TC] ERROR: " .. tostring(err)) end
+end
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Roster scan (disconnect + death detection)
 -- ─────────────────────────────────────────────────────────────────────────────
 local function scanRoster(NH)
     local ok, err = pcall(function()
         local PC = NH:getPlayerContainer()
-        local n  = PC:getNPlayers()
         local current = {}
 
-        for i = 0, n - 1 do
+        for i = 0, PC:getNPlayers()-1 do
             local pok, P = pcall(function() return PC:getPlayer(i) end)
             if pok and P then
                 local data = getPlayerData(P)
@@ -373,21 +283,19 @@ local function scanRoster(NH)
                     current[data.gameId] = true
                     local known = TC.knownPlayers[data.gameId]
                     if known and data.deaths > known.deaths then
-                        sendEvent("player-death", {
-                            player = {gameId = data.gameId, name = data.name, steamId = data.steamId}
+                        queueEvent("player-death", {
+                            player = {gameId=data.gameId, name=data.name, steamId=data.steamId}
                         })
                     end
-                    -- Update tracked state (preserve gameId/name/steamId in case player left)
                     TC.knownPlayers[data.gameId] = data
                 end
             end
         end
 
-        -- Detect disconnects
         for gId, data in pairs(TC.knownPlayers) do
             if not current[gId] then
-                sendEvent("player-disconnected", {
-                    player = {gameId = gId, name = data.name, steamId = data.steamId}
+                queueEvent("player-disconnected", {
+                    player = {gameId=gId, name=data.name, steamId=data.steamId}
                 })
                 TC.knownPlayers[gId] = nil
             end
@@ -397,134 +305,80 @@ local function scanRoster(NH)
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- pollServerTick_extra hook  (~500ms per tick)
--- ─────────────────────────────────────────────────────────────────────────────
-customFunc.pollServerTick_extra = customFunc.pollServerTick_extra or {}
-table.insert(customFunc.pollServerTick_extra, function(NH)
-    if not TC.enabled then return end
-
-    TC.tickCount = TC.tickCount + 1
-
-    -- Roster scan every 4 ticks (~2s): detect disconnects + deaths
-    if TC.tickCount % 4 == 0 then
-        scanRoster(NH)
-    end
-
-    -- Command poll: read previous async result, start next poll
-    if TC.tickCount % 8 == 0 then
-        local ok, err = pcall(function()
-            -- Read result from previous async curl (if any)
-            local raw = readPollResult()
-            if raw then
-                local parsed = jsonDecode(raw)
-                if parsed and parsed.hasCommand and parsed.command then
-                    handleCommand(NH, parsed.command)
-                end
-            end
-            -- Kick off next async poll immediately
-            startPoll()
-        end)
-        if not ok then turf.printc("[TakaroConnector] poll tick error: " .. tostring(err)) end
-    end
-end)
-
--- ─────────────────────────────────────────────────────────────────────────────
 -- onPlayerLogin_extra hook
 -- ─────────────────────────────────────────────────────────────────────────────
-customFunc.onPlayerLogin_extra = customFunc.onPlayerLogin_extra or {}
-table.insert(customFunc.onPlayerLogin_extra, function(GMS, P)
+local _prev_onPlayerLogin_extra = customFunc.onPlayerLogin_extra
+customFunc.onPlayerLogin_extra = function(GMS, P)
+    if _prev_onPlayerLogin_extra then _prev_onPlayerLogin_extra(GMS, P) end
     if not TC.enabled then return end
     local ok, err = pcall(function()
         local data = getPlayerData(P)
         if not data then return end
         TC.knownPlayers[data.gameId] = data
-        sendEvent("player-connected", {
-            player = {gameId = data.gameId, name = data.name, steamId = data.steamId}
+        queueEvent("player-connected", {
+            player = {gameId=data.gameId, name=data.name, steamId=data.steamId}
         })
     end)
     if not ok then turf.printc("[TakaroConnector] login hook error: " .. tostring(err)) end
-end)
+end
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- processCommandsUserCallback: capture plain chat (command == "")
+-- Chat capture
 -- ─────────────────────────────────────────────────────────────────────────────
 processCommandsUserCallback = processCommandsUserCallback or {}
-table.insert(processCommandsUserCallback, function(NH, P, command, argv)
-    if not TC.enabled then return end
-    if not P then return end
-    if command ~= "" then return end  -- only plain chat (empty command = chat message)
-
+table.insert(processCommandsUserCallback, {"TakaroConnector_chat", function(NH, P, command, argv)
+    if not TC.enabled or not P or command ~= "" then return end
     local ok, err = pcall(function()
         local msg = (argv and argv[1]) or ""
-        if msg == "" then return end
-        if msg:sub(1,1) == "/" then return end  -- skip commands
-
+        if msg == "" or msg:sub(1,1) == "/" then return end
         local data = getPlayerData(P)
         if not data then return end
-
-        sendEvent("chat-message", {
-            player  = {gameId = data.gameId, name = data.name, steamId = data.steamId},
+        queueEvent("chat-message", {
+            player  = {gameId=data.gameId, name=data.name, steamId=data.steamId},
             msg     = msg,
             channel = "global",
         })
     end)
-    if not ok then turf.printc("[TakaroConnector] chat hook error: " .. tostring(err)) end
-    -- Return nothing: let vanilla process the chat
-end)
+    if not ok then turf.printc("[TakaroConnector] chat error: " .. tostring(err)) end
+end})
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- defineServerCommandsUserCallback: register /takarostatus admin command
+-- /takarostatus admin command
 -- ─────────────────────────────────────────────────────────────────────────────
 defineServerCommandsUserCallback = defineServerCommandsUserCallback or {}
-table.insert(defineServerCommandsUserCallback, function(NH)
-    -- Register /takarostatus - no-op here, handled in process callback below
-end)
+table.insert(defineServerCommandsUserCallback, {"TakaroConnector", function(NH) end})
 
-table.insert(processCommandsUserCallback, function(NH, P, command, argv)
-    if not P then return end
-    if command ~= "takarostatus" then return end
-    if not P:isAdmin() then
-        NH:messageSM("[TakaroConnector] Admin only.", P:getId())
-        return true
-    end
-    local n = 0
-    for _ in pairs(TC.knownPlayers) do n = n + 1 end
-    NH:messageSM(string.format("[TakaroConnector] enabled=%s bridge=%s tracked_players=%d tick=%d",
-        tostring(TC.enabled), TC.BRIDGE_URL, n, TC.tickCount), P:getId())
-    return true  -- consume command
-end)
+table.insert(processCommandsUserCallback, {"TakaroConnector_status", function(NH, P, command, argv)
+    if not P or command ~= "takarostatus" then return end
+    if not P:isAdmin() then NH:messageSM("[TakaroConnector] Admin only.", P:getId()); return true end
+    local n = 0; for _ in pairs(TC.knownPlayers) do n=n+1 end
+    NH:messageSM(string.format("[TakaroConnector] enabled=%s queued_events=%d tracked_players=%d secret=%d",
+        tostring(TC.enabled), #TC.eventQueue, n, TC.EXTERNAL_SECRET), P:getId())
+    return true
+end})
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- Initialize
+-- externalPoll — called by engine every server loop tick
 -- ─────────────────────────────────────────────────────────────────────────────
-local function startBridge()
-    -- bridge.js lives inside the mod folder; start it as a background process
-    -- The path is relative to the game working directory
-    local bridgeScript = "mods\\TakaroConnector\\bridge\\bridge.js"
-    local bridgeLog    = "mods\\TakaroConnector\\bridge.log"
-    local cmd = 'start /B "" cmd /c "node ' .. bridgeScript ..
-                ' >> ' .. bridgeLog .. ' 2>&1"'
-    local ok = pcall(function() os.execute(cmd) end)
-    if ok then
-        turf.printc("[TakaroConnector] Bridge started (node " .. bridgeScript .. ")")
-    else
-        turf.printc("[TakaroConnector] Warning: could not start bridge (is Node.js installed?)")
+function externalPoll()
+    if not TC.enabled then return end
+    TC.tickCount = TC.tickCount + 1
+    if TC.tickCount % 4 == 0 then
+        local ok, err = pcall(function()
+            scanRoster(turf.NetworkHandler.getInstance())
+        end)
+        if not ok then turf.printc("[TakaroConnector] externalPoll error: " .. tostring(err)) end
     end
 end
 
-local function init()
-    local ok, err = pcall(function()
-        loadConfig()
-        if TC.enabled then
-            startBridge()
-            turf.printc("[TakaroConnector] Started. Bridge: " .. TC.BRIDGE_URL)
-            startPoll()
-            sendEvent("log", {msg = "TakaroConnector started"})
-        else
-            turf.printc("[TakaroConnector] Disabled (ENABLED=false in config)")
-        end
-    end)
-    if not ok then turf.printc("[TakaroConnector] INIT ERROR: " .. tostring(err)) end
-end
-
-init()
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Register with defineExternalCommandsTable — engine calls defineExternalCommands
+-- at startup which iterates this table to call setExternalSecret
+-- ─────────────────────────────────────────────────────────────────────────────
+print("[TC] takaro_connector.lua loaded OK")
+defineExternalCommandsTable = defineExternalCommandsTable or {}
+table.insert(defineExternalCommandsTable, {"TakaroConnector", function(NH)
+    print("[TC] defineExternalCommands callback called")
+    NH:setExternalSecret(TC.EXTERNAL_SECRET)
+    turf.printc("[TakaroConnector] Ready. secret=" .. TC.EXTERNAL_SECRET)
+end})

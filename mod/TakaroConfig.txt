@@ -1,7 +1,21 @@
-# TakaroConnector Configuration
-# Edit BRIDGE_URL to point to where the VoxelTurf-Bridge is running
-# On the game server: bridge and game are on same machine, use localhost
+# ─────────────────────────────────────────────────────────────────────────────
+# TakaroConnector configuration
+# ─────────────────────────────────────────────────────────────────────────────
+# Edit the two values you actually need: SERVER_NAME and REGISTRATION_TOKEN.
 
-BRIDGE_URL=http://127.0.0.1:3003
-POLL_INTERVAL=2
+# Any name you like — also used as the identity Takaro shows for this server.
+SERVER_NAME=My Voxel Turf Server
+
+# Get this from https://app.takaro.io when you add a new "Generic" game server.
+REGISTRATION_TOKEN=paste-your-takaro-registration-token-here
+
+# The UDP port your Voxel Turf server runs on. Default is 5728.
+# If you launch vtserver with "--port XXXX", set this to the same number.
+GAME_PORT=5728
+
+# Shared secret between the Lua mod and the bridge (localhost only).
+# Leave as-is unless you also change EXTERNAL_SECRET in scripts/server/takaro_connector.lua.
+EXTERNAL_SECRET=123456
+
+# Set to false to disable the connector without removing the mod.
 ENABLED=true

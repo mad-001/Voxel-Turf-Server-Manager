@@ -138,155 +138,153 @@
 <body>
 <div class="container">
     <h1>Voxel Turf Server Manager</h1>
-    <p class="subtitle">Connect your Voxel Turf server to <a href="https://takaro.io/pricing/?via=zach550">Takaro</a> — Discord chat bridge, server announcements, and admin control from the Takaro dashboard.</p>
+    <p class="subtitle">Connect your Voxel Turf server to <a href="https://takaro.io/pricing/?via=zach550">Takaro</a> — player events, chat bridge, server announcements, and admin control from the Takaro dashboard.</p>
 
     <a href="https://github.com/mad-001/Voxel-Turf-Server-Manager/releases/latest" class="btn">Download Latest Release</a>
     <a href="https://takaro.io/pricing/?via=zach550" class="btn btn-secondary">Sign Up for Takaro (Free)</a>
 
     <div class="feature-grid">
         <div class="feature-card">
-            <strong>Chat Bridge</strong>
-            Player chat forwarded to Takaro in real time. Reply from the dashboard or Discord.
-        </div>
-        <div class="feature-card">
             <strong>Player Events</strong>
-            Join, leave, and death events automatically tracked in Takaro.
+            Join, leave, chat, and death events tracked in Takaro in real time.
         </div>
         <div class="feature-card">
             <strong>Admin Actions</strong>
-            Kick, ban, broadcast messages, and give items directly from Takaro.
+            Kick, ban, broadcast, give items, teleport, and read inventory from Takaro.
         </div>
         <div class="feature-card">
-            <strong>Server-Side Only</strong>
-            No client mod required. Loaded as a plain Voxel Turf server mod.
+            <strong>Server Lifecycle</strong>
+            Server start, stop, and world-save events delivered as log events.
+        </div>
+        <div class="feature-card">
+            <strong>Drop-in</strong>
+            No client mod. The bridge auto-launches with the server — nothing to run by hand.
         </div>
     </div>
 
     <h2>How It Works</h2>
-    <pre><code>Voxel Turf Server                    Bridge (Node.js)           Takaro
-┌──────────────────────────┐         ┌────────────────────┐    ┌──────────────┐
-│ TakaroConnector Lua mod  │         │ VoxelTurf-Bridge   │    │ Takaro Cloud │
-│  · player events         │──HTTP──▶│  · WebSocket client│──▶│ wss://connect│
-│  · chat capture          │◀──HTTP──│  · command queue   │◀──│  .takaro.io/ │
-│  · kick / ban / give     │         │  · player cache    │    │              │
-└──────────────────────────┘         └────────────────────┘    └──────────────┘</code></pre>
-    <p>The Lua mod runs inside your Voxel Turf server and communicates with a small Node.js bridge process running on the same machine. The bridge maintains the persistent WebSocket connection to Takaro and translates between the two protocols.</p>
+    <pre><code>Voxel Turf server (1.9.9)         bridge.exe (auto-launched)           Takaro
+┌───────────────────────────┐     ┌──────────────────────────┐    ┌──────────────┐
+│ TakaroConnector Lua mod   │     │ bridge.js                │    │ Takaro Cloud │
+│  · player / chat / death  │─UDP─│  · WebSocket client      │──▶ │ wss://connect│
+│  · inventory, kick, give  │◀UDP─│  · request / response    │◀── │  .takaro.io/ │
+└───────────────────────────┘     └──────────────────────────┘    └──────────────┘
+   winmm.dll in the server root launches bridge.js and shuts it down with the game.</code></pre>
+    <p>The Lua mod runs inside your Voxel Turf server. A small <code>winmm.dll</code> placed in the server root auto-launches <code>bridge.exe</code> — a self-contained program with no Node.js or other runtime required — which holds the WebSocket connection to Takaro. The bridge starts and stops with the game; there is no separate program to run and no client-side install.</p>
 
-    <h2>Step 1 — Get a Takaro Account</h2>
-    <ol>
-        <li>Go to <a href="https://takaro.io/pricing/?via=zach550">takaro.io/pricing</a> and pick a plan.</li>
-        <li>Sign up and confirm your email, then log in at <code>app.takaro.io</code>.</li>
-    </ol>
+    <div class="warning-box">
+        <strong>One hard requirement before you start:</strong>
+        <ul>
+            <li><strong>Voxel Turf <code>1.9.9</code> beta branch.</strong> The connector uses an API that does not exist in 1.9.8 stable. On the wrong version the server runs but Takaro never connects (endless "UDP timeout" in the bridge log). See Step 1.</li>
+        </ul>
+        Nothing else to install — no Node.js, no runtime. The bridge ships as a self-contained <code>bridge.exe</code> that starts and stops with your server.
+    </div>
 
-    <h2>Step 2 — Register Your Server in Takaro</h2>
+    <h2>Step 1 — Put Your Server on the 1.9.9 Beta</h2>
+    <p>Using SteamCMD, update the Voxel Turf Dedicated Server (app id <code>526340</code>) to the <code>beta</code> branch:</p>
+    <pre><code>force_install_dir C:\path\to\your\voxelturf\server
+login anonymous
+app_update 526340 -beta beta
+quit</code></pre>
+    <p>The <code>beta</code> branch is labelled "Public Beta" and is the 1.9.9 line — no password needed. Run it <strong>without</strong> <code>validate</code> so it does not remove the mod files.</p>
+    <div class="note-box">
+        <strong>Pin the beta.</strong> A plain <code>app_update 526340</code> (or a Steam auto-update) reverts to 1.9.8 and breaks Takaro. Always include <code>-beta beta</code> in whatever update script you use.
+    </div>
+
+    <h2>Step 2 — Get a Takaro Account &amp; Register Your Server</h2>
     <ol>
-        <li>In the Takaro dashboard, click <strong>Game Servers</strong> → <strong>Create Game Server</strong>.</li>
-        <li>Choose <strong>Generic</strong> as the server type.</li>
-        <li>Give the server any name you like.</li>
-        <li>Takaro will generate a <strong>Registration Token</strong>. Copy it — you'll paste it into the config in Step 4.</li>
+        <li>Sign up at <a href="https://takaro.io/pricing/?via=zach550">takaro.io</a> and log in at <code>app.takaro.io</code>.</li>
+        <li>Go to <strong>Game Servers</strong> → <strong>Create Game Server</strong> and choose <strong>Generic</strong>.</li>
+        <li>Copy the <strong>Registration Token</strong> it generates — you'll paste it in Step 4.</li>
     </ol>
 
     <h2>Step 3 — Install the Mod</h2>
-    <p>Download the latest release ZIP and extract it. Inside you'll find a folder named <code>TakaroConnector</code>. Copy that entire folder into your Voxel Turf server's <code>mods\</code> directory:</p>
-    <pre><code>C:\path\to\voxelturf\server\
-├── mods\
-│   └── TakaroConnector\           &lt;-- copy here
-│       ├── scripts\
-│       │   ├── server_scripts.txt
-│       │   └── server\
-│       │       └── takaro_connector.lua
-│       └── TakaroConfig.txt
-└── VoxelTurf.exe                  (already there)</code></pre>
+    <p>Download the latest release ZIP and <strong>extract it directly into your Voxel Turf server folder</strong>. The ZIP is laid out so its contents land in the right places:</p>
+    <pre><code>C:\path\to\your\voxelturf\server\
+├── winmm.dll                         &lt;-- lands in the server ROOT (launches the bridge)
+├── vtserver.exe                      (already there)
+└── mods\
+    └── TakaroConnector\              &lt;-- the mod
+        ├── TakaroConfig.txt
+        ├── bridge\
+        │   └── bridge.exe            (self-contained — no Node.js needed)
+        └── scripts\
+            ├── server_scripts.txt
+            └── server\takaro_connector.lua</code></pre>
+    <div class="info-box"><code>winmm.dll</code> must sit in the <strong>same folder as <code>vtserver.exe</code></strong> (the server root), <em>not</em> inside <code>mods\</code>. That file is what starts the bridge.</div>
 
-    <h2>Step 4 — Configure the Mod</h2>
-    <p>Open <code>mods\TakaroConnector\TakaroConfig.txt</code> and fill in two fields:</p>
-    <pre><code>BRIDGE_URL=http://127.0.0.1:3003
-POLL_INTERVAL=2
-ENABLED=true</code></pre>
-    <p>Leave <code>BRIDGE_URL</code> as-is if the bridge runs on the same machine as the game server (the default). The mod reads this file on every server start.</p>
-
-    <h2>Step 5 — Configure and Start the Bridge</h2>
-    <p>From the release ZIP, copy the <code>VoxelTurf-Bridge</code> folder anywhere on your server (or the same machine). Open <code>TakaroConfig.txt</code> inside it:</p>
+    <h2>Step 4 — Configure</h2>
+    <p>Open <code>mods\TakaroConnector\TakaroConfig.txt</code> and set:</p>
     <pre><code>SERVER_NAME=My Voxel Turf Server
 REGISTRATION_TOKEN=paste-your-token-from-step-2-here
-HTTP_PORT=3003</code></pre>
+GAME_PORT=5728
+EXTERNAL_SECRET=123456
+ENABLED=true</code></pre>
     <table>
         <tr><th>Key</th><th>Required?</th><th>Description</th></tr>
-        <tr><td><code>SERVER_NAME</code></td><td>Yes</td><td>Any name — used as the identity with Takaro.</td></tr>
-        <tr><td><code>REGISTRATION_TOKEN</code></td><td>Yes</td><td>Token copied from the Takaro dashboard in Step 2.</td></tr>
-        <tr><td><code>HTTP_PORT</code></td><td>Optional</td><td>Local port the bridge listens on. Must match <code>BRIDGE_URL</code> in the mod config. Default <code>3003</code>.</td></tr>
+        <tr><td><code>SERVER_NAME</code></td><td>Yes</td><td>Any name — used as this server's identity in Takaro.</td></tr>
+        <tr><td><code>REGISTRATION_TOKEN</code></td><td>Yes</td><td>Token from the Takaro dashboard (Step 2).</td></tr>
+        <tr><td><code>GAME_PORT</code></td><td>Optional</td><td>Your server's UDP port. Default <code>5728</code>; match it to your <code>--port</code> if you changed it.</td></tr>
+        <tr><td><code>EXTERNAL_SECRET</code></td><td>Optional</td><td>Localhost-only shared secret. Leave as <code>123456</code> unless you also change it in <code>takaro_connector.lua</code>.</td></tr>
+        <tr><td><code>ENABLED</code></td><td>Optional</td><td>Set <code>false</code> to disable without removing the mod.</td></tr>
     </table>
 
-    <div class="note-box">
-        <strong>Node.js required.</strong> The bridge needs Node.js 18 or newer. Download it free at <a href="https://nodejs.org">nodejs.org</a>. After installing Node, double-click <code>start.bat</code> inside the <code>VoxelTurf-Bridge</code> folder — it installs dependencies and starts the bridge automatically.
-    </div>
-
-    <p>To start the bridge: double-click <code>start.bat</code>. Keep the window open while the server runs. To stop it: close the window or double-click <code>stop.bat</code>.</p>
-
-    <h2>Step 6 — Start Your Voxel Turf Server</h2>
-    <p>Start your Voxel Turf server normally. The mod loads automatically because it's in the <code>mods\</code> folder — no launch-flag changes needed. You should see this line in the server console shortly after startup:</p>
-    <pre><code>[TakaroConnector] Started. Bridge: http://127.0.0.1:3003</code></pre>
-
-    <h2>Step 7 — Verify It's Working</h2>
+    <h2>Step 5 — Start &amp; Verify</h2>
+    <p>Start your Voxel Turf server normally — the mod and bridge load automatically. To confirm it's working:</p>
     <ol>
-        <li>In the bridge window, look for: <code>Identified with Takaro</code> and <code>HTTP server listening on http://127.0.0.1:3003</code>.</li>
-        <li>Refresh your server's page in the Takaro dashboard — the <strong>Reachable</strong> indicator should turn green within a few seconds.</li>
-        <li>Have a player join. A <code>player-connected</code> event should appear in Takaro's event stream.</li>
-        <li>Type in chat — it should appear in Takaro as a <code>chat-message</code> event.</li>
+        <li>Server console shows <code>[TC] takaro_connector.lua loaded OK</code> and <code>[TC] defineExternalCommands callback called</code>.</li>
+        <li><code>mods\TakaroConnector\bridge.log</code> shows <code>Identified with Takaro</code> and <code>VoxelTurf server started</code>, with <strong>no</strong> repeating <code>UDP timeout</code> lines.</li>
+        <li>Your server turns <strong>online / reachable</strong> in the Takaro dashboard within a few seconds.</li>
+        <li>Have a player join and chat — <code>player-connected</code> and <code>chat-message</code> appear in Takaro's event stream.</li>
     </ol>
-
-    <div class="info-box">
-        <strong>Admin status command.</strong> Once in-game, any admin can type <code>/takarostatus</code> in chat to get a status report from the mod (bridge URL, number of tracked players, tick count).
-    </div>
-
-    <h2>Available Takaro Actions</h2>
-    <table>
-        <tr><th>Action</th><th>What it does</th></tr>
-        <tr><td><code>testReachability</code></td><td>Returns immediately — verifies the bridge is reachable</td></tr>
-        <tr><td><code>getPlayers</code></td><td>Returns the current online player list</td></tr>
-        <tr><td><code>sendMessage</code></td><td>Broadcasts a server message to all players</td></tr>
-        <tr><td><code>sendMessageToPlayer</code></td><td>Sends a private message to one player</td></tr>
-        <tr><td><code>kickPlayer</code></td><td>Kicks a player by their game ID</td></tr>
-        <tr><td><code>banPlayer</code></td><td>Bans a player from the server</td></tr>
-        <tr><td><code>unbanPlayer</code></td><td>Removes a player's ban</td></tr>
-        <tr><td><code>giveItem</code></td><td>Adds an item to a player's inventory</td></tr>
-        <tr><td><code>teleportPlayer</code></td><td>Teleports a player to X/Z coordinates</td></tr>
-        <tr><td><code>executeCommand</code></td><td>Dispatches a console command</td></tr>
-    </table>
+    <div class="info-box"><strong>Admin status command.</strong> In-game, an admin can type <code>/takarostatus</code> to see tracked-player count, queued events, and the shared secret.</div>
 
     <h2>Events Sent to Takaro</h2>
     <table>
         <tr><th>Event</th><th>When it fires</th></tr>
-        <tr><td><code>player-connected</code></td><td>A player logs into the server</td></tr>
-        <tr><td><code>player-disconnected</code></td><td>A player leaves (detected on the next roster scan, ~2s delay)</td></tr>
-        <tr><td><code>chat-message</code></td><td>A player sends a public chat message</td></tr>
-        <tr><td><code>player-death</code></td><td>A player's death counter increases</td></tr>
+        <tr><td><code>player-connected</code></td><td>A player joins. Carries gameId (player id), name (steam name), steamId.</td></tr>
+        <tr><td><code>player-disconnected</code></td><td>A player leaves (detected on the next roster scan, a few ticks).</td></tr>
+        <tr><td><code>chat-message</code></td><td>A player sends a public chat message.</td></tr>
+        <tr><td><code>player-death</code></td><td>A player's death counter increases.</td></tr>
+        <tr><td><code>log</code> — server started</td><td>The server finishes loading and the bridge connects.</td></tr>
+        <tr><td><code>log</code> — world saved</td><td>The world is saved to disk.</td></tr>
+        <tr><td><code>log</code> — server stopped</td><td>The server process exits.</td></tr>
+    </table>
+    <p>Takaro has no built-in start/stop/save event, so those are delivered as <code>log</code> events — create a module Hook on the <code>log</code> event and match the message text.</p>
+
+    <h2>Actions Takaro Can Run</h2>
+    <table>
+        <tr><th>Action</th><th>What it does</th></tr>
+        <tr><td><code>testReachability</code></td><td>Confirms the server is online.</td></tr>
+        <tr><td><code>getPlayers</code></td><td>Returns the current online player list.</td></tr>
+        <tr><td><code>getPlayerInventory</code></td><td>Returns a player's inventory items (name, code, amount).</td></tr>
+        <tr><td><code>sendMessage</code></td><td>Broadcasts a server message to all players.</td></tr>
+        <tr><td><code>sendMessageToPlayer</code></td><td>Sends a private message to one player.</td></tr>
+        <tr><td><code>kickPlayer</code> / <code>banPlayer</code> / <code>unbanPlayer</code></td><td>Moderation by game id.</td></tr>
+        <tr><td><code>giveItem</code></td><td>Adds an item to a player's inventory.</td></tr>
+        <tr><td><code>teleportPlayer</code></td><td>Teleports a player to X/Z coordinates.</td></tr>
+        <tr><td><code>executeCommand</code></td><td>Dispatches a console command.</td></tr>
     </table>
 
     <h2>Troubleshooting</h2>
 
-    <h3>Mod line doesn't appear in the server console</h3>
-    <p>Confirm the mod folder structure is exactly as shown in Step 3. In particular, check that <code>server_scripts.txt</code> exists inside <code>TakaroConnector\scripts\</code> — this is the file the engine scans to find mod scripts.</p>
+    <h3>Bridge log shows endless "UDP timeout waiting for game response"</h3>
+    <p>Your server is on <strong>1.9.8</strong>, not the 1.9.9 beta. The Lua loads but the external API never registers (you won't see <code>defineExternalCommands callback called</code>). Redo Step 1 with <code>-beta beta</code> and confirm the version is 1.9.9.</p>
+
+    <h3>Nothing happens / no bridge.log at all</h3>
+    <ul>
+        <li>Make sure <code>winmm.dll</code> is in the server <strong>root</strong> (next to <code>vtserver.exe</code>), not in <code>mods\</code>.</li>
+        <li>Make sure your antivirus didn't quarantine <code>bridge.exe</code> (it's an unsigned bundled executable). Allow it and restart the server.</li>
+    </ul>
 
     <h3>Bridge connects but Takaro says "Unreachable"</h3>
     <ul>
-        <li>Confirm <code>REGISTRATION_TOKEN</code> in the bridge config matches the token shown in the Takaro dashboard.</li>
-        <li>Outbound HTTPS to <code>connect.takaro.io:443</code> must not be blocked by your firewall or hosting provider.</li>
-        <li>If the registration token was already consumed, regenerate it in the Takaro dashboard.</li>
+        <li>Check <code>REGISTRATION_TOKEN</code> matches the dashboard; regenerate it if it was already used.</li>
+        <li>Outbound HTTPS to <code>connect.takaro.io:443</code> must not be firewalled.</li>
     </ul>
-
-    <h3>Bridge starts but the mod can't reach it</h3>
-    <ul>
-        <li>Confirm <code>HTTP_PORT</code> in the bridge config matches the port in <code>BRIDGE_URL</code> in the mod config.</li>
-        <li>If the bridge is on a different machine, replace <code>127.0.0.1</code> in <code>BRIDGE_URL</code> with the bridge machine's LAN IP.</li>
-        <li>Windows Firewall may block inbound connections on port 3003 — add an inbound rule to allow it.</li>
-    </ul>
-
-    <h3>Server console shows <code>[TakaroConnector] INIT ERROR</code></h3>
-    <p>This means the Lua mod crashed during initialization — usually a missing API. Check the error text after the colon and open a GitHub issue with the full line.</p>
 
     <h3>Anything else</h3>
-    <p>Open an issue at <a href="https://github.com/mad-001/Voxel-Turf-Server-Manager/issues">github.com/mad-001/Voxel-Turf-Server-Manager/issues</a> and include the bridge log (<code>voxelturf-bridge.log</code> in the bridge folder) and your server console output.</p>
+    <p>Open an issue at <a href="https://github.com/mad-001/Voxel-Turf-Server-Manager/issues">github.com/mad-001/Voxel-Turf-Server-Manager/issues</a> and include <code>mods\TakaroConnector\bridge.log</code> and your server console output.</p>
 </div>
 </body>
 </html>
