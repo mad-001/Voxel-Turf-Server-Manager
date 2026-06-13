@@ -92,20 +92,74 @@ The dev added chunk-sampling methods to **Chunk** — useful for building a map/
   each block at the top of the chunk. Each block is a **4×4** minimap texture, so a
   **32×32 chunk → 128×128 bitmap**.
 
-### Method added to ChunkContainer
+### ChunkContainer
+- `getNChunks()` + `Chunks[...]` — iterate every loaded chunk.
 - `getWorldBitmap()` — returns one **giant RGBA bitmap for ALL loaded chunks**.
-  ⚠️ **Very slow** — the dev's guidance: in a real application, build a **bitmap per
-  chunk on a polling basis** instead of calling this.
+  ⚠️ **Very slow — do NOT use in production.**
 
-> Workflow: get a minimap from `sampleMinimapTextures()`, then **shade it by height**
-> using `sampleHeight()`. Per-chunk + polling > one big `getWorldBitmap()`.
+> **✅ LIVE as of steam beta `1.9.9a`** (dev confirmed 2026-06-13). Earlier the running
+> server (`vtserver.exe` Jun 12, base 1.9.9) had **0** of these bindings — **update the
+> server to the `1.9.9a` beta branch** to get them. (`settings/minimap_colours.dat` is
+> already present.)
 
-> **⚠ Exposure status (checked 2026-06-13):** these methods are NOT in the running build
-> yet. `vtserver.exe` (Jun 12) contains the known Lua bindings (`getIdByName`,
-> `getItemTypeContainer`, `broadcastSM`, `setExternalSecret`…) but **0 hits** for
-> `sampleHeight`/`sampleBlocks`/`sampleMinimapTextures`/`getWorldBitmap`. The dev added
-> them Jun 13 — a newer server build is needed before the connector can call them.
-> (`settings/minimap_colours.dat` is already present.)
+### Recommended approach (per-chunk, incremental — NOT getWorldBitmap)
+Build the map **incrementally as chunks load**, per chunk:
+1. `Chunk::sampleMinimapTextures()` → `chunkMinimapSamples`.
+2. Call **`getBitmap(false)`** on it → a chunk-wise RGBA bitmap.
+3. Use `Chunk:sampleHeight()` to **shade by height**.
+4. The `chunkMinimapSamples` struct carries the chunk's **`x, z`** (positions) and
+   **`xs, zs`** (sizes) so you know where to place it in the world map.
+
+**Rotation:** the output is **rotated 90°**. To fix it, switch xMajor —
+`samples.getBitmap(true)` — **and** flip the chunk x/z coords when encoding into the map.
+
+### Reference: how `getWorldBitmap()` is implemented (dev)
+```cpp
+string getWorldBitmap() const {
+    size_t count = 0;
+    return getWorldBitmap_worker(count);
+}
+
+string getWorldBitmap_worker(size_t & countOut) const {
+    const uint32_t SP = Chunk::chunkMinimapSamples::getNSubpixelsStatic();
+
+    const uint32_t worldWidth  = theWorld->getXSize() * SP;
+    const uint32_t worldHeight = theWorld->getZSize() * SP;
+    const uint32_t bitDepth    = 4;
+
+    string result;
+    result.resize(worldWidth * worldHeight * bitDepth);
+
+    size_t nEncoded = 0;
+    for (size_t i = 0; i < nChunks; ++i) {
+        if (!Chunks[i]) continue;
+
+        Chunk::chunkMinimapSamples samples = Chunks[i]->sampleMinimapTextures();
+        const string chunkBitmap = samples.getBitmap(false);
+
+        const int chunkWorldX = Chunks[i]->getX();
+        const int chunkWorldZ = Chunks[i]->getZ();
+        const uint32_t chunkWidth  = Chunks[i]->getXSize() * SP;
+        const uint32_t chunkHeight = Chunks[i]->getZSize() * SP;
+
+        const uint32_t dstX = (chunkWorldX - theWorld->getXMin()) * SP;
+        const uint32_t dstZ = (chunkWorldZ - theWorld->getZMin()) * SP;
+
+        for (uint32_t z = 0; z < chunkHeight; ++z) {
+            const uint32_t srcOffset = z * chunkWidth;
+            const uint32_t dstOffset = (dstZ + z) * worldWidth + dstX;
+            memcpy(
+                const_cast<char*>(result.data()) + dstOffset * bitDepth,
+                chunkBitmap.data() + srcOffset * bitDepth,
+                chunkWidth * bitDepth
+            );
+        }
+        nEncoded++;
+    }
+    countOut = nEncoded;
+    return result;
+}
+```
 
 ### Returned structs
 ```cpp
