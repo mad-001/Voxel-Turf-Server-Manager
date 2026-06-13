@@ -78,3 +78,72 @@ while True:
     print(f"from {addr}:")
     print(data.hex(" "))
 ```
+
+## Chunk sampling / minimap (dev: SnapperTheTwig, 2026-06-13)
+
+The dev added chunk-sampling methods to **Chunk** — useful for building a map/minimap
+(e.g. for Takaro's `getMapInfo` / `getMapTile` actions). "The top of the chunk" = the
+**first non-air block**.
+
+### Methods added to Chunk
+- `chunkSamples sampleHeight()` — returns the **height** at the top of the chunk.
+- `chunkSamples sampleBlocks()` — returns the **blockIds** at the top of the chunk.
+- `chunkMinimapSamples sampleMinimapTextures()` — returns the **minimap texture** for
+  each block at the top of the chunk. Each block is a **4×4** minimap texture, so a
+  **32×32 chunk → 128×128 bitmap**.
+
+> Workflow: get a minimap from `sampleMinimapTextures()`, then **shade it by height**
+> using `sampleHeight()`.
+
+### Returned structs
+```cpp
+struct chunkSamples {
+    int32_t x, z;
+    uint8_t xs, zs;
+    vector<uint16_t> data;
+    inline uint16_t getValueAt(const uint8_t x, const uint8_t z) const {
+        return data[x*zs + z];
+    }
+    inline void setValueAt(const uint8_t x, const uint8_t z, const uint16_t val) {
+        data[x*zs + z] = val;
+    }
+};
+
+struct chunkMinimapSamples {
+    int32_t x, z;
+    uint8_t xs, zs;
+    vector<minimapTex> data;
+    inline minimapTex getValueAt(const uint8_t x, const uint8_t z) const {
+        return data[x*zs + z];
+    }
+    inline void setValueAt(const uint8_t x, const uint8_t z, const minimapTex val) {
+        data[x*zs + z] = val;
+    }
+    uint8_t getNSubpixels() const { return minimapTex::MINIMAP_SZ; }
+    inline uint8_t getR(const uint8_t x, const uint8_t z, const uint8_t subX, const uint8_t subZ) const {
+        return getValueAt(x,z).getAsStructAt(subX, subZ).getR();
+    }
+    inline uint8_t getG(const uint8_t x, const uint8_t z, const uint8_t subX, const uint8_t subZ) const {
+        return getValueAt(x,z).getAsStructAt(subX, subZ).getG();
+    }
+    inline uint8_t getB(const uint8_t x, const uint8_t z, const uint8_t subX, const uint8_t subZ) const {
+        return getValueAt(x,z).getAsStructAt(subX, subZ).getB();
+    }
+    inline uint8_t getA(const uint8_t x, const uint8_t z, const uint8_t subX, const uint8_t subZ) const {
+        return getValueAt(x,z).getAsStructAt(subX, subZ).getA();
+    }
+
+    string getBitmap(const bool xMajor) const {
+        // ... (returns the chunk's minimap as a bitmap)
+    }
+};
+```
+
+### Open issue (dev, 2026-06-13)
+> "The only issue currently is that the **server does not have the texture information.**
+> I need to **precompile the minimap textures using the client and feed the data file to
+> the server** — and where is that file?"
+
+So minimap textures need to be **precompiled on the client** and shipped to the server as
+a data file before `sampleMinimapTextures()` returns real colours server-side. (The
+location of that precompiled texture data file is still TBD.)
