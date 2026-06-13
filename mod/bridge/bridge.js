@@ -1,4 +1,4 @@
-// VoxelTurf Takaro Bridge v2.2.1
+// VoxelTurf Takaro Bridge v2.3.8
 // Uses VoxelTurf N_EXTERNAL UDP API — no HTTP server needed.
 // Launched by winmm.dll / takaro.dll (via the version.dll proxy) with the game PID as argv[1].
 // Monitors game PID and exits immediately when the game process dies.
@@ -35,6 +35,23 @@ const EXTERNAL_SECRET    = parseInt(cfg.EXTERNAL_SECRET || '123456', 10);
 const POLL_INTERVAL_MS   = parseInt(cfg.POLL_INTERVAL_MS || '2000', 10);
 const TAKARO_URL         = 'wss://connect.takaro.io/';
 const LOG_FILE           = path.join(BASE_DIR, '..', 'bridge.log');
+
+// Rotate the log on each startup -> one file per server run instead of one
+// ever-growing file. Archive the previous bridge.log as bridge_<timestamp>.log
+// and keep only the most recent few archives.
+(function rotateLog() {
+  try {
+    if (!fs.existsSync(LOG_FILE)) return;
+    const dir = path.dirname(LOG_FILE);
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    fs.renameSync(LOG_FILE, path.join(dir, 'bridge_' + ts + '.log'));
+    const archives = fs.readdirSync(dir)
+      .filter(f => /^bridge_.*\.log$/.test(f))
+      .map(f => ({ f, t: fs.statSync(path.join(dir, f)).mtimeMs }))
+      .sort((a, b) => b.t - a.t);
+    archives.slice(5).forEach(a => { try { fs.unlinkSync(path.join(dir, a.f)); } catch (_) {} });
+  } catch (_) {}
+})();
 // PID is argv[2] when launched as `node bridge.js <pid>`, or argv[1] as `bridge.exe <pid>`.
 const GAME_PID           = parseInt(process.argv[2]) || parseInt(process.argv[1]) || null;
 
@@ -276,6 +293,121 @@ function handle(msg) {
   }
 }
 
+// VoxelTurf has no native help command. This is OUR synthetic help text, returned
+// straight from the bridge so it never has to survive the UDP round-trip to the game.
+const HELP_TEXT = [
+  '=== Takaro -> Voxel Turf Console ===',
+  'To affect a player, start with them:  <player> <command>',
+  '  <player> = name, "quoted name with spaces", Steam ID, or game id.',
+  '',
+  'ECONOMY / ITEMS',
+  '  <player> money <amount>         e.g. Bob money 1000  (max ~21,000,000)',
+  '  <player> credits <amount>       e.g. Bob credits 500',
+  '  <player> give <item> <amount>   e.g. Bob give wood 50',
+  '  <player> giveinf <item>         e.g. Bob giveinf stone',
+  '  <player> reputation <-100..100> e.g. Bob reputation 100',
+  '  <player> exp <amount>           e.g. Bob exp 5000',
+  '  <player> marks on|off|clear',
+  '',
+  'PLAYER STATE',
+  '  <player> heal',
+  '  <player> godmode                (toggle)',
+  '  <player> fly                    (toggle)',
+  '  <player> invisible              (toggle)',
+  '  <player> loadout                (all weapons + explosives)',
+  '  <player> die',
+  '  <player> tp <x> <z>             e.g. Bob tp 100 200',
+  '  <player> tp <x> <y> <z>         (with height)',
+  '',
+  'MODERATION',
+  '  kick <player>',
+  '  ban <player> [reason]',
+  '  unban <player>',
+  '  ipban <player> [reason]',
+  '  whitelist <player>',
+  '  unwhitelist <player>',
+  '  mode <player> <mode>',
+  '  m <player> <message>',
+  '',
+  'WORLD / SERVER',
+  '  save                            save the world now',
+  '  motd <text>                     set the message of the day',
+  '  me <text>                       emote in chat',
+  '',
+  'Tip: type a command with no name (e.g. "money 1000") and it acts on YOU.',
+].join('\n');
+
+// Every Voxel Turf console command name (from server_commands.lua) + help aliases.
+// Used to tell whether the FIRST word is a command or a target-player identifier.
+const VT_COMMANDS = new Set([
+  'give','giveinf','me','m','mode','save','credits','money','tp','lua','exit',
+  'fill','replace','copy','rdecal','mirror','rotate','kick','ban','unban','ipban',
+  'die','whitelist','unwhitelist','votekick','lot','lotrange','road','notoriety',
+  'fly','reputation','exp','motd','loadout','assignmission','eliminate','annex',
+  'yesman','ftick','specialbuild','heal','godmode','nofuzz','dungeonspawn',
+  'revealdungeons','status','s','winmissions','marks','invisible','ddebug',
+  'help','commands','?',
+]);
+
+// Split the first token off a command line, honouring "quoted names with spaces"
+// (so a player called "Mad Man" can be targeted). Returns {first, rest, quoted}.
+function parseFirstToken(s) {
+  s = String(s || '').trim();
+  if (s[0] === '"' || s[0] === "'") {
+    const q = s[0];
+    const end = s.indexOf(q, 1);
+    if (end !== -1) return { first: s.slice(1, end), rest: s.slice(end + 1).trim(), quoted: true };
+  }
+  const m = s.match(/^(\S+)\s*([\s\S]*)$/);
+  return { first: m ? m[1] : s, rest: m ? m[2].trim() : '', quoted: false };
+}
+
+// Resolve a player from the live cache by ANY identifier: game id, Steam ID (64),
+// platform id (voxelturf:<steam64>), or name (case-insensitive). Bridge-only because
+// it holds the SteamID64 mapping the Lua can't compute.
+function resolvePlayer(token) {
+  const t  = String(token).trim();
+  const tl = t.toLowerCase();
+  for (const p of playerCache.values()) {
+    const sid = p.steamId ? String(p.steamId) : '';
+    const gid = String(p.gameId);
+    if (gid === t) return p;
+    if (sid && sid === t) return p;
+    if (sid && ('voxelturf:' + sid) === tl) return p;
+    if (('voxelturf:' + gid).toLowerCase() === tl) return p;
+    if (p.name && String(p.name).toLowerCase() === tl) return p;
+  }
+  return null;
+}
+
+// Pre-process a console command. Returns a response to send back immediately
+// (help / errors), or null after (optionally) rewriting args to forward to the game.
+// When a target player is named, args.command is stripped to just the command and
+// args.asGameId is set so the Lua runs it as that player.
+function prepareConsole(args) {
+  const raw = String(args.command || args.rawCommand || args.message || '').trim();
+  const firstWord = raw.split(/\s+/)[0].toLowerCase();
+  if (raw === '' || firstWord === 'help' || firstWord === 'commands' || firstWord === '?') {
+    return { success: true, rawResult: HELP_TEXT };
+  }
+
+  const { first, rest, quoted } = parseFirstToken(raw);
+  // Unquoted real command -> run as-is (acts on the admin it runs as). No target.
+  if (!quoted && VT_COMMANDS.has(first.toLowerCase())) { args.command = raw; return null; }
+
+  // Otherwise the first token is a target player (name / "quoted name" / steamId / gameId).
+  const player = resolvePlayer(first);
+  if (!player) {
+    return { success: false, rawResult: "Unknown command, or player not found: '" + first + "'. Type 'help'." };
+  }
+  if (!rest) {
+    return { success: false, rawResult: "No command after player '" + player.name + "'. e.g. " + player.name + ' money 1000' };
+  }
+  args.command  = rest;
+  args.asGameId = String(player.gameId);
+  return null;
+}
+
 async function handleRequest(requestId, payload) {
   const action  = payload.action || '';
   const rawArgs = payload.args;
@@ -304,25 +436,45 @@ async function handleRequest(requestId, payload) {
     case 'listEntities':
       sendResponse(requestId, []);
       return;
-    case 'getPlayerLocation':
-      sendResponse(requestId, { x: 0, y: 0, z: 0 });
-      return;
   }
 
-  // Game-side commands — send via UDP
+  // Game-side commands — send via UDP. getPlayerLocation/inventory/console all need
+  // live game state, so they round-trip to the Lua connector.
   const GAME_ACTIONS = ['sendMessage','sendMessageToPlayer','executeCommand','executeConsoleCommand',
-                        'kickPlayer','banPlayer','unbanPlayer','giveItem','teleportPlayer','getPlayerInventory'];
+                        'kickPlayer','banPlayer','unbanPlayer','giveItem','teleportPlayer',
+                        'getPlayerInventory','getPlayerLocation'];
   if (!GAME_ACTIONS.includes(action)) {
     sendResponse(requestId, { success: false, error: 'Unsupported: ' + action });
     return;
   }
 
+  // help / commands / ? / empty are OUR synthetic console commands — answer them here
+  // and never touch the game (the big multi-line help text doesn't survive the UDP
+  // round-trip; Takaro's CommandOutput needs a real rawResult string). Real commands
+  // (money, give, kick, ...) still go to the game's API to actually execute.
+  if (action === 'executeCommand' || action === 'executeConsoleCommand') {
+    const reply = prepareConsole(args);
+    if (reply) { sendResponse(requestId, reply); return; }
+  }
+
+  const isConsole = (action === 'executeCommand' || action === 'executeConsoleCommand');
   try {
     const res = await udpRequest({ type: 'command', requestId, action, args });
-    if (res && res.result !== undefined) sendResponse(requestId, res.result);
-    else sendResponse(requestId, { success: false, error: 'No result from game' });
+    if (res && res.result !== undefined) {
+      // Console commands MUST carry a string rawResult or Takaro's CommandOutput
+      // validation/console UI breaks — backfill it if the game omitted one.
+      if (isConsole && (res.result.rawResult === undefined || res.result.rawResult === null)) {
+        res.result.rawResult = res.result.error || (res.result.success ? 'OK' : 'Command failed');
+      }
+      sendResponse(requestId, res.result);
+    } else if (isConsole) {
+      sendResponse(requestId, { success: false, rawResult: 'No result from game' });
+    } else {
+      sendResponse(requestId, { success: false, error: 'No result from game' });
+    }
   } catch (e) {
-    sendResponse(requestId, { success: false, error: 'UDP error: ' + e.message });
+    if (isConsole) sendResponse(requestId, { success: false, rawResult: 'UDP error: ' + e.message });
+    else           sendResponse(requestId, { success: false, error: 'UDP error: ' + e.message });
   }
 }
 
@@ -403,4 +555,4 @@ connect();
 process.on('SIGINT',  () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-log('VoxelTurf Takaro Bridge v2.2.1 started (UDP mode, game=' + GAME_HOST + ':' + GAME_PORT + ', secret=' + EXTERNAL_SECRET + ') — hooks: start/stop/save/join/leave/chat/death/inventory');
+log('VoxelTurf Takaro Bridge v2.3.8 started (UDP mode, game=' + GAME_HOST + ':' + GAME_PORT + ', secret=' + EXTERNAL_SECRET + ') — hooks: start/stop/save/join/leave/chat/death/inventory; actions incl. console/location/giveItem');

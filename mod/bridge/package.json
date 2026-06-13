@@ -1,10 +1,1 @@
-{
-  "name": "vt-takaro-bridge",
-  "version": "2.2.0",
-  "description": "VoxelTurf <-> Takaro bridge, auto-launched by the TakaroConnector mod via winmm.dll",
-  "main": "bridge.js",
-  "license": "MIT",
-  "dependencies": {
-    "ws": "^8.18.3"
-  }
-}
+{"name":"vt-takaro-bridge","version":"2.3.8","main":"bridge.js","bin":"bridge.js"}
