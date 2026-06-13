@@ -92,8 +92,20 @@ The dev added chunk-sampling methods to **Chunk** — useful for building a map/
   each block at the top of the chunk. Each block is a **4×4** minimap texture, so a
   **32×32 chunk → 128×128 bitmap**.
 
+### Method added to ChunkContainer
+- `getWorldBitmap()` — returns one **giant RGBA bitmap for ALL loaded chunks**.
+  ⚠️ **Very slow** — the dev's guidance: in a real application, build a **bitmap per
+  chunk on a polling basis** instead of calling this.
+
 > Workflow: get a minimap from `sampleMinimapTextures()`, then **shade it by height**
-> using `sampleHeight()`.
+> using `sampleHeight()`. Per-chunk + polling > one big `getWorldBitmap()`.
+
+> **⚠ Exposure status (checked 2026-06-13):** these methods are NOT in the running build
+> yet. `vtserver.exe` (Jun 12) contains the known Lua bindings (`getIdByName`,
+> `getItemTypeContainer`, `broadcastSM`, `setExternalSecret`…) but **0 hits** for
+> `sampleHeight`/`sampleBlocks`/`sampleMinimapTextures`/`getWorldBitmap`. The dev added
+> them Jun 13 — a newer server build is needed before the connector can call them.
+> (`settings/minimap_colours.dat` is already present.)
 
 ### Returned structs
 ```cpp
