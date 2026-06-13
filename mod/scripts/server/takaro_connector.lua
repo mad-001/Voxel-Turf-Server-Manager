@@ -182,7 +182,7 @@ for _, c in ipairs({
     "fly","reputation","exp","motd","loadout","assignmission","eliminate","annex",
     "yesman","ftick","specialbuild","heal","godmode","nofuzz","dungeonspawn",
     "revealdungeons","status","s","winmissions","marks","invisible","ddebug",
-    "shutdown","stop","help","commands","?",
+    "shutdown","stop","say","announce","broadcast","help","commands","?",
 }) do VT_COMMANDS[c] = true end
 
 -- Find an online player by (case-insensitive) name — lets a console command be run
@@ -211,27 +211,29 @@ end
 local function helpText()
     return table.concat({
         "=== Takaro -> Voxel Turf Console ===",
-        "To affect a player, start with them:  <player> <command>",
+        "Syntax:  <command> <player> <args>",
         "  <player> = name, \"quoted name with spaces\", Steam ID, or game id.",
         "",
         "ECONOMY / ITEMS",
-        "  <player> money <amount>         e.g. Bob money 1000  (max ~21,000,000)",
-        "  <player> credits <amount>       e.g. Bob credits 500",
-        "  <player> give <item> <amount>   e.g. Bob give wood 50",
-        "  <player> giveinf <item>         e.g. Bob giveinf stone",
-        "  <player> reputation <-100..100> e.g. Bob reputation 100",
-        "  <player> exp <amount>           e.g. Bob exp 5000",
-        "  <player> marks on|off|clear",
+        "  money <player> <amount>         e.g. money Bob 1000  (max ~21,000,000)",
+        "  credits <player> <amount>       e.g. credits Bob 500",
+        "  give <player> <item> <amount>   e.g. give Bob wood 50",
+        "  giveinf <player> <item>         e.g. giveinf Bob stone",
+        "  reputation <player> <-100..100> e.g. reputation Bob 100",
+        "  exp <player> <amount>           e.g. exp Bob 5000",
+        "  marks <player> on|off|clear",
         "",
         "PLAYER STATE",
-        "  <player> heal",
-        "  <player> godmode                (toggle)",
-        "  <player> fly                    (toggle)",
-        "  <player> invisible              (toggle)",
-        "  <player> loadout                (all weapons + explosives)",
-        "  <player> die",
-        "  <player> tp <x> <z>             e.g. Bob tp 100 200",
-        "  <player> tp <x> <y> <z>         (with height)",
+        "  heal <player>",
+        "  godmode <player>                (toggle)",
+        "  fly <player>                    (toggle)",
+        "  invisible <player>              (toggle)",
+        "  loadout <player>                (all weapons + explosives)",
+        "  die <player>",
+        "  tp <player> <x> <z>             e.g. tp Bob 100 200",
+        "  tp <player> <x> <y> <z>         (with height)",
+        "  mode <player> v|h|o|s|-v",
+        "  m <player> <message>",
         "",
         "MODERATION",
         "  kick <player>",
@@ -240,31 +242,43 @@ local function helpText()
         "  ipban <player> [reason]",
         "  whitelist <player>",
         "  unwhitelist <player>",
-        "  mode <player> <mode>",
-        "  m <player> <message>",
         "",
         "WORLD / SERVER",
+        "  say <message>                   broadcast a chat message to everyone",
         "  save                            save the world now",
         "  shutdown                        stop the server (auto-restarts if start.bat loops)",
         "  motd <text>                     set the message of the day",
         "  me <text>                       emote in chat",
-        "",
-        "Tip: type a command with no name (e.g. \"money 1000\") and it acts on YOU.",
     }, "\n")
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- Direct console-command handlers.
--- Apply each effect STRAIGHT to the target via the engine methods (verified against
--- server_commands.lua), bypassing processCommand's rank gating and its "acts on the
--- issuer" model. For self/state commands P is the TARGET player; name-based moderation
--- uses argv[2]. Each returns (ok:boolean, message:string). Anything not in this table
--- falls back to processCommand (build tools, loadout, me, mode, ...).
+-- Direct console-command handlers.   Syntax: <command> <player> <args...>
+-- The bridge resolves <player> (name/SteamID/gameId) and passes P (online player)
+-- and targetName (resolved or raw name, for offline-capable bans). argv here is
+-- {command, ...args} with the player ALREADY stripped, so argv[2] is the first arg.
+-- Each handler applies the effect STRAIGHT to the target via the engine methods
+-- (verified vs server_commands.lua), bypassing rank gating. Returns (ok, message).
 -- ─────────────────────────────────────────────────────────────────────────────
 local MONEY_LIM, CREDIT_LIM = 21474836, 2147483647
 
+local function joinFrom(argv, startIdx, default)
+    local r = argv[startIdx]
+    if not r then return default end
+    for i = startIdx + 1, #argv do r = r .. " " .. argv[i] end
+    return r
+end
+
+local function joinRange(argv, s, e)
+    if s > e or not argv[s] then return nil end
+    local r = argv[s]
+    for i = s + 1, e do r = r .. " " .. argv[i] end
+    return r
+end
+
 local DIRECT = {}
 
+-- ── Economy / items (act on the online target P) ─────────────────────────────
 DIRECT.money = function(NH, P, argv)
     local amt = tonumber(argv[2]) or 1000000
     local note = ""
@@ -284,25 +298,32 @@ DIRECT.credits = function(NH, P, argv)
 end
 
 DIRECT.give = function(NH, P, argv)
-    if not argv[2] then return false, "give: <item> <amount>" end
+    -- argv = {give, <item words...>, <amount?>}. Item names have spaces, so the trailing
+    -- token is the amount only if numeric; everything else (argv[2..]) is the item name.
+    local n = #argv
+    local qty, itemEnd = 1, n
+    local last = tonumber(argv[n])
+    if last and n >= 3 then qty = last; itemEnd = n - 1 end
+    local itemName = joinRange(argv, 2, itemEnd)
+    if not itemName then return false, "give <player> <item> <amount>" end
     local ITC = NH:getItemTypeContainer()
-    local id = ITC:getIdByName(argv[2])
-    if id == turf.ItemTypeContainer.I_NONE then return false, "Unknown item: " .. tostring(argv[2]) end
-    local qty = tonumber(argv[3]) or 1
+    local id = ITC:getIdByName(itemName)
+    if id == turf.ItemTypeContainer.I_NONE then return false, "Unknown item: " .. itemName end
     if qty < 1 then qty = 1 end
     local maxStack = ITC:get(id):getStackSize()
     if maxStack and qty > maxStack then qty = maxStack end
     P:getInventory():give(id, qty); P:getInventory():setClientUpdateFlag(true); P:markCheated()
-    return true, "Gave " .. qty .. " " .. argv[2] .. " to " .. P:getName()
+    return true, "Gave " .. qty .. " " .. itemName .. " to " .. P:getName()
 end
 
 DIRECT.giveinf = function(NH, P, argv)
-    if not argv[2] then return false, "giveinf: <item>" end
+    local itemName = joinRange(argv, 2, #argv)
+    if not itemName then return false, "giveinf <player> <item>" end
     local ITC = NH:getItemTypeContainer()
-    local id = ITC:getIdByName(argv[2])
-    if id == turf.ItemTypeContainer.I_NONE then return false, "Unknown item: " .. tostring(argv[2]) end
+    local id = ITC:getIdByName(itemName)
+    if id == turf.ItemTypeContainer.I_NONE then return false, "Unknown item: " .. itemName end
     P:getInventory():give(id, 255); P:getInventory():setClientUpdateFlag(true); P:markCheated()
-    return true, "Gave INF " .. argv[2] .. " to " .. P:getName()
+    return true, "Gave INF " .. itemName .. " to " .. P:getName()
 end
 
 DIRECT.heal = function(NH, P, argv)
@@ -325,6 +346,28 @@ DIRECT.exp = function(NH, P, argv)
     return true, P:getName() .. " gained " .. tostring(amt) .. " exp"
 end
 
+DIRECT.marks = function(NH, P, argv)
+    local a = argv[2]
+    if a == "on"  then P:setMarksEnabled(true);  return true, "Marks enabled for "  .. P:getName() end
+    if a == "off" then P:setMarksEnabled(false); return true, "Marks disabled for " .. P:getName() end
+    if a == "clear" or a == "c" then P:clearMarks(); return true, "Marks cleared for " .. P:getName() end
+    return false, "marks <player> on|off|clear"
+end
+
+DIRECT.loadout = function(NH, P, argv)
+    local inv = P:getInventory()
+    inv:give(1283, 80)
+    inv:give(12000,6); inv:give(12006,21); inv:give(12012,4); inv:give(12018,55); inv:give(12024,5)
+    inv:give(12030,1); inv:give(12032,2); inv:give(12034,1); inv:give(12036,4)
+    inv:give(12003,255); inv:give(12009,255); inv:give(12015,255); inv:give(12021,255); inv:give(12027,255)
+    inv:give(12031,255); inv:give(12033,255); inv:give(12035,255); inv:give(12037,255)
+    inv:give(12039,2); inv:give(12040,2); inv:give(12041,2); inv:give(12046,2); inv:give(12049,2)
+    inv:setClientUpdateFlag(true)
+    P:getCredentials():addExperience(2000); P:setMoneyUpdateFlag(); P:markCheated()
+    return true, "Gave loadout to " .. P:getName()
+end
+
+-- ── Player-state toggles (act on the online target P) ────────────────────────
 DIRECT.fly = function(NH, P, argv)
     local c = P:getCredentials(); c.flyEnabled = not c.flyEnabled; P:markCheated()
     return true, P:getName() .. (c.flyEnabled and " fly ON" or " fly OFF")
@@ -349,64 +392,71 @@ DIRECT.tp = function(NH, P, argv)
     local x  = tonumber(argv[2])
     local v2 = tonumber(argv[3])
     local v3 = tonumber(argv[4])
-    if not x or not v2 then return false, "tp: <x> <z>  or  <x> <y> <z>" end
+    if not x or not v2 then return false, "tp <player> <x> <z>  (or <x> <y> <z>)" end
     if v3 then P:teleport3i(x, v2, v3) else P:teleport2i(x, v2) end
     P:markCheated()
     return true, "Teleported " .. P:getName()
 end
 
-DIRECT.marks = function(NH, P, argv)
-    local a = argv[2]
-    if a == "on"  then P:setMarksEnabled(true);  return true, "Marks enabled for "  .. P:getName() end
-    if a == "off" then P:setMarksEnabled(false); return true, "Marks disabled for " .. P:getName() end
-    if a == "clear" or a == "c" then P:clearMarks(); return true, "Marks cleared for " .. P:getName() end
-    return false, "marks: on | off | clear"
+DIRECT.m = function(NH, P, argv)
+    local msg = joinFrom(argv, 2, nil)
+    if not msg then return false, "m <player> <message>" end
+    NH:messageSM("[Takaro] " .. msg, P:getId())
+    return true, "Sent to " .. P:getName() .. ": " .. msg
 end
 
--- Moderation / name-based (bypass rank — we call the engine method directly).
-local function banReasonFrom(argv, default)
-    local r = argv[3] or default
-    for i = 4, #argv do r = r .. " " .. argv[i] end
-    return r
+DIRECT.mode = function(NH, P, argv)
+    local m = argv[2]
+    local val
+    if     m == "-v" or m == "0" then val = 0
+    elseif m == "v" then val = turf.NetworkHandler.MODE_VOICE
+    elseif m == "h" then val = turf.NetworkHandler.MODE_HOP
+    elseif m == "o" then val = turf.NetworkHandler.MODE_OP
+    elseif m == "s" then val = turf.NetworkHandler.MODE_SOP
+    else return false, "mode <player> v|h|o|s|-v" end
+    P:setMode(val)
+    return true, P:getName() .. " mode -> " .. tostring(m)
 end
 
 DIRECT.kick = function(NH, P, argv)
-    if not argv[2] then return false, "kick: <player>" end
-    if NH:kickPlayer(argv[2]) then return true, "Kicked " .. argv[2] end
-    return false, "Could not kick " .. argv[2] .. " (not online?)"
+    if NH:kickPlayer(P:getName()) then return true, "Kicked " .. P:getName() end
+    return false, "Could not kick " .. P:getName()
 end
 
-DIRECT.ban = function(NH, P, argv)
-    if not argv[2] then return false, "ban: <player> [reason]" end
-    local r = NH:banPlayer(argv[2], NH:getPlayerContainer():getIdByNameCi(argv[2]), banReasonFrom(argv, "Banned via Takaro"), "Takaro")
-    return true, (type(r) == "string" and r) or ("Banned " .. argv[2])
+-- ── Moderation by name (targetName may be an OFFLINE player) ──────────────────
+DIRECT.ban = function(NH, P, argv, tn)
+    if not tn then return false, "ban <player> [reason]" end
+    local reason = joinFrom(argv, 2, "Banned via Takaro")
+    local r = NH:banPlayer(tn, NH:getPlayerContainer():getIdByNameCi(tn), reason, "Takaro")
+    return true, (type(r) == "string" and r) or ("Banned " .. tn)
 end
 
-DIRECT.unban = function(NH, P, argv)
-    if not argv[2] then return false, "unban: <player>" end
-    local r = NH:unbanPlayer(argv[2], NH:getPlayerContainer():getIdByNameCi(argv[2]))
-    return true, (type(r) == "string" and r) or ("Unbanned " .. argv[2])
+DIRECT.unban = function(NH, P, argv, tn)
+    if not tn then return false, "unban <player>" end
+    local r = NH:unbanPlayer(tn, NH:getPlayerContainer():getIdByNameCi(tn))
+    return true, (type(r) == "string" and r) or ("Unbanned " .. tn)
 end
 
-DIRECT.ipban = function(NH, P, argv)
-    if not argv[2] then return false, "ipban: <player> [reason]" end
-    local r = NH:ipBanPlayer(argv[2], banReasonFrom(argv, "IP banned via Takaro"), "Takaro")
-    return true, (type(r) == "string" and r) or ("IP-banned " .. argv[2])
+DIRECT.ipban = function(NH, P, argv, tn)
+    if not tn then return false, "ipban <player> [reason]" end
+    local reason = joinFrom(argv, 2, "IP banned via Takaro")
+    local r = NH:ipBanPlayer(tn, reason, "Takaro")
+    return true, (type(r) == "string" and r) or ("IP-banned " .. tn)
 end
 
-DIRECT.whitelist = function(NH, P, argv)
-    if not argv[2] then return false, "whitelist: <player>" end
-    local r = NH:whitelistPlayer(argv[2], NH:getPlayerContainer():getIdByNameCi(argv[2]), "", "Takaro")
-    return true, (type(r) == "string" and r) or ("Whitelisted " .. argv[2])
+DIRECT.whitelist = function(NH, P, argv, tn)
+    if not tn then return false, "whitelist <player>" end
+    local r = NH:whitelistPlayer(tn, NH:getPlayerContainer():getIdByNameCi(tn), "", "Takaro")
+    return true, (type(r) == "string" and r) or ("Whitelisted " .. tn)
 end
 
-DIRECT.unwhitelist = function(NH, P, argv)
-    if not argv[2] then return false, "unwhitelist: <player>" end
-    local r = NH:unwhitelistPlayer(argv[2], NH:getPlayerContainer():getIdByNameCi(argv[2]), "", "Takaro")
-    return true, (type(r) == "string" and r) or ("Unwhitelisted " .. argv[2])
+DIRECT.unwhitelist = function(NH, P, argv, tn)
+    if not tn then return false, "unwhitelist <player>" end
+    local r = NH:unwhitelistPlayer(tn, NH:getPlayerContainer():getIdByNameCi(tn), "", "Takaro")
+    return true, (type(r) == "string" and r) or ("Unwhitelisted " .. tn)
 end
 
--- World / server (no target player needed).
+-- ── World / server (no target player) ────────────────────────────────────────
 DIRECT.save = function(NH, P, argv)
     NH:broadcastSM("Saving...", turf.WorldObj.ALL_WORLDS)
     NH:getMultiverse():FullSave()
@@ -415,15 +465,12 @@ DIRECT.save = function(NH, P, argv)
 end
 
 DIRECT.motd = function(NH, P, argv)
-    if not argv[2] then return false, "motd: <text>" end
-    local str = argv[2]
-    for i = 3, #argv do str = str .. " " .. argv[i] end
+    local str = joinFrom(argv, 2, nil)
+    if not str then return false, "motd <text>" end
     NH:setMessageOfTheDay(str)
     return true, "MOTD set: " .. str
 end
 
--- shutdown/stop/exit: flag the server to shut down (the engine's `exit` command).
--- If start.bat has an auto-restart loop this acts as a restart.
 DIRECT.shutdown = function(NH, P, argv)
     NH:broadcastSM("Server shutting down (Takaro)...", turf.WorldObj.ALL_WORLDS)
     NH:flagShutdown()
@@ -432,10 +479,25 @@ end
 DIRECT.stop = DIRECT.shutdown
 DIRECT.exit = DIRECT.shutdown
 
--- Commands that need an actual target player (self/state). Moderation + save/motd do not.
-local DIRECT_NEEDS_TARGET = {
+-- say/announce/broadcast: send a chat message to EVERY player on the server.
+DIRECT.say = function(NH, P, argv)
+    local msg = joinFrom(argv, 2, nil)
+    if not msg then return false, "say <message>" end
+    NH:broadcastSM(msg, turf.WorldObj.ALL_WORLDS)
+    return true, "Broadcast: " .. msg
+end
+DIRECT.announce  = DIRECT.say
+DIRECT.broadcast = DIRECT.say
+
+-- Commands whose 2nd token is a player who must be ONLINE (we operate on P).
+local DIRECT_NEEDS_P = {
     money=true, credits=true, give=true, giveinf=true, heal=true, reputation=true,
-    exp=true, fly=true, godmode=true, invisible=true, die=true, tp=true, marks=true,
+    exp=true, marks=true, loadout=true, fly=true, godmode=true, invisible=true,
+    die=true, tp=true, m=true, mode=true, kick=true,
+}
+-- Moderation by name — target may be offline (we use targetName, not P).
+local DIRECT_NEEDS_NAME = {
+    ban=true, unban=true, ipban=true, whitelist=true, unwhitelist=true,
 }
 
 local function handleCommand(NH, action, args, requestId)
@@ -518,63 +580,35 @@ local function handleCommand(NH, action, args, requestId)
         return {requestId = requestId, result = {success = ok, error = ok and nil or tostring(err)}}
 
     elseif action == "executeCommand" or action == "executeConsoleCommand" then
+        -- Syntax: <command> <player> <args>. The bridge has already resolved <player>
+        -- (name/SteamID/gameId), stripped it from args.command, and passed args.asGameId
+        -- (online player) and/or args.asPlayer (resolved or raw name for offline bans).
         local raw = tostring(args.command or args.rawCommand or args.message or "")
         local tokens = {}
         for tok in raw:gmatch("%S+") do tokens[#tokens+1] = tok end
-        local first = string.lower(tokens[1] or "")
-        if first == "" then
+        local cmdName = string.lower(tokens[1] or "")
+        if cmdName == "" then
             return {requestId = requestId, result = {success = false, rawResult = "", errorMessage = "Empty command. Try 'help'."}}
         end
-        if first == "help" or first == "commands" or first == "?" then
+        if cmdName == "help" or cmdName == "commands" or cmdName == "?" then
             return {requestId = requestId, result = {success = true, rawResult = helpText()}}
         end
 
-        -- The bridge resolves the target player (by name/"quoted name"/steamId/gameId)
-        -- and passes args.asGameId + the stripped command. If present, run as that player.
-        -- Otherwise fall back to: first word is a TARGET PLAYER unless it's a command.
-        --   "money 1000"     -> command, runs as an online admin (acts on them = you)
-        --   "Bob money 1000" -> run "money 1000" as the player Bob
-        --   "kick Bob"/"save"-> command (kick targets by name natively; save needs no one)
-        local P, targetName
-        local asGameId = args.asGameId and tostring(args.asGameId) or nil
-        if asGameId and asGameId ~= "" then
-            P = pickActor(NH, asGameId)
-            if not P then
-                return {requestId = requestId, result = {success = false, rawResult = "",
-                    errorMessage = "Target player not online (gameId " .. asGameId .. ")."}}
-            end
-            targetName = P:getName()
-        elseif VT_COMMANDS[first] then
-            P = pickAdmin(NH)
-        else
-            targetName = tokens[1]
-            P = pickActorByName(NH, targetName)
-            if not P then
-                return {requestId = requestId, result = {success = false, rawResult = "",
-                    errorMessage = "Unknown command, or player not online: '" .. targetName .. "'. Type 'help'."}}
-            end
-            local rest = {}
-            for i = 2, #tokens do rest[#rest+1] = tokens[i] end
-            tokens = rest
-            raw = table.concat(tokens, " ")
-            targetName = P:getName() or targetName
-        end
+        local asGameId   = args.asGameId and tostring(args.asGameId) or nil
+        local targetName = args.asPlayer and tostring(args.asPlayer) or nil
+        local P = (asGameId and asGameId ~= "") and pickActor(NH, asGameId) or nil
 
-        local cmdName = string.lower(tokens[1] or "")
-        if cmdName == "" then
-            return {requestId = requestId, result = {success = false, rawResult = "",
-                errorMessage = "No command after player name. e.g. " .. (targetName or "Bob") .. " money 1000"}}
-        end
-
-        -- Prefer a DIRECT handler: applies the effect straight to the target via engine
-        -- methods, bypassing processCommand's rank gate and "acts on the issuer" model.
         local handler = DIRECT[cmdName]
         if handler then
-            if DIRECT_NEEDS_TARGET[cmdName] and not P then
+            if DIRECT_NEEDS_P[cmdName] and not P then
                 return {requestId = requestId, result = {success = false, rawResult = "",
-                    errorMessage = "Specify a player, e.g. <player> " .. cmdName}}
+                    errorMessage = "Player not online for '" .. cmdName .. "'. Usage: " .. cmdName .. " <player> ..."}}
             end
-            local hok, ok, msg = pcall(handler, NH, P, tokens)
+            if DIRECT_NEEDS_NAME[cmdName] and not targetName then
+                return {requestId = requestId, result = {success = false, rawResult = "",
+                    errorMessage = "Usage: " .. cmdName .. " <player> ..."}}
+            end
+            local hok, ok, msg = pcall(handler, NH, P, tokens, targetName)
             if not hok then
                 return {requestId = requestId, result = {success = false, rawResult = "", errorMessage = tostring(ok)}}
             end
@@ -584,26 +618,23 @@ local function handleCommand(NH, action, args, requestId)
             return {requestId = requestId, result = {success = false, rawResult = "", errorMessage = tostring(msg)}}
         end
 
-        -- Fallback: run via the game's master dispatcher as the resolved player. Used for
-        -- commands we don't reimplement (build tools, loadout, me, mode, ...). These are
-        -- still rank-gated on the player they run as.
+        -- Fallback for commands we don't reimplement (build tools: fill/replace/copy/
+        -- rotate/mirror/lot/road/..., and `me`). These act on the admin running them.
         if type(processCommand) ~= "function" then
             return {requestId = requestId, result = {success = false, rawResult = "", errorMessage = "processCommand unavailable"}}
         end
-        if not P then
+        local Padmin = pickAdmin(NH)
+        if not Padmin then
             return {requestId = requestId, result = {success = false, rawResult = "",
-                errorMessage = "No online player to run '" .. cmdName .. "' as. Have a player online."}}
+                errorMessage = "No online admin to run '" .. cmdName .. "'. Have an admin online."}}
         end
         local ret = ""
         local cok,cerr = pcall(function()
-            local r = processCommand(NH, P, cmdName, tokens, raw)
+            local r = processCommand(NH, Padmin, cmdName, tokens, raw)
             if type(r) == "string" then ret = r end
         end)
         if cok then
-            if ret == "" then
-                local who = targetName or (P:getName() or "?")
-                ret = "OK: '" .. raw .. "' -> " .. who
-            end
+            if ret == "" then ret = "OK: " .. raw end
             return {requestId = requestId, result = {success = true, rawResult = ret}}
         end
         return {requestId = requestId, result = {success = false, rawResult = "", errorMessage = tostring(cerr)}}
@@ -655,7 +686,35 @@ local function handleCommand(NH, action, args, requestId)
         return {requestId = requestId, result = items}
 
     elseif action == "listItems" then
-        return {requestId = requestId, result = {}}
+        -- Enumerate the item catalog in batches (the N_EXTERNAL reply is ONE datagram,
+        -- so the bridge calls repeatedly with args.start and stitches the result, then
+        -- caches it to items.json at startup). Only include items whose name round-trips
+        -- through getIdByName -> id; that filters sentinels/duplicates AND guarantees the
+        -- name actually works with `give`.
+        local ITC = NH:getItemTypeContainer()
+        local startId = math.floor(tonumber(args.start) or 1)
+        local MAX_ID, BATCH = 30000, 12   -- small batch: the N_EXTERNAL reply is ONE small datagram
+        local items = {}
+        local id = startId
+        while id <= MAX_ID and #items < BATCH do
+            local item = nil
+            pcall(function() item = ITC:get(id) end)
+            if item ~= nil then
+                local nm = nil
+                local disabled = false
+                pcall(function() disabled = item.isDisabled and true or false end)
+                pcall(function() nm = item:getName() end)
+                -- Only include items whose name round-trips through getIdByName -> id.
+                -- That filters sentinels/dupes AND guarantees the name works with `give`
+                -- and the Takaro shop (names are the exact, case-sensitive give-codes).
+                if nm and nm ~= "" and not disabled and ITC:getIdByName(nm) == id then
+                    items[#items + 1] = {name = nm, code = nm}
+                end
+            end
+            id = id + 1
+        end
+        local nextId = (id <= MAX_ID) and id or 0   -- 0 = done (JSON has no nil in arrays)
+        return {requestId = requestId, result = {items = items, nextId = nextId}}
 
     else
         return {requestId = requestId, result = {success = false, error = "Unknown action: " .. tostring(action)}}

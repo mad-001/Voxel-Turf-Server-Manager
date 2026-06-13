@@ -56,6 +56,9 @@ SOCKET g_udp = INVALID_SOCKET;
 struct PlayerInfo { std::string gameId, name, steamId; };
 std::map<std::string, PlayerInfo> g_players;   // by gameId
 
+json       g_itemsCache = json::array();       // item catalog, enumerated once at startup
+std::mutex g_itemsMutex;
+
 const uint64_t STEAM64_BASE = 76561197960265728ULL;
 
 // ─── Logging ───────────────────────────────────────────────────────────────────
@@ -215,27 +218,29 @@ void sendLog(const std::string& msg) {
 // ─── Console help + targeting (ported from bridge.js) ────────────────────────────
 const char* HELP_TEXT =
 "=== Takaro -> Voxel Turf Console ===\n"
-"To affect a player, start with them:  <player> <command>\n"
+"Syntax:  <command> <player> <args>\n"
 "  <player> = name, \"quoted name with spaces\", Steam ID, or game id.\n"
 "\n"
 "ECONOMY / ITEMS\n"
-"  <player> money <amount>         e.g. Bob money 1000  (max ~21,000,000)\n"
-"  <player> credits <amount>       e.g. Bob credits 500\n"
-"  <player> give <item> <amount>   e.g. Bob give wood 50\n"
-"  <player> giveinf <item>         e.g. Bob giveinf stone\n"
-"  <player> reputation <-100..100> e.g. Bob reputation 100\n"
-"  <player> exp <amount>           e.g. Bob exp 5000\n"
-"  <player> marks on|off|clear\n"
+"  money <player> <amount>         e.g. money Bob 1000  (max ~21,000,000)\n"
+"  credits <player> <amount>       e.g. credits Bob 500\n"
+"  give <player> <item> <amount>   e.g. give Bob wood 50\n"
+"  giveinf <player> <item>         e.g. giveinf Bob stone\n"
+"  reputation <player> <-100..100> e.g. reputation Bob 100\n"
+"  exp <player> <amount>           e.g. exp Bob 5000\n"
+"  marks <player> on|off|clear\n"
 "\n"
 "PLAYER STATE\n"
-"  <player> heal\n"
-"  <player> godmode                (toggle)\n"
-"  <player> fly                    (toggle)\n"
-"  <player> invisible              (toggle)\n"
-"  <player> loadout                (all weapons + explosives)\n"
-"  <player> die\n"
-"  <player> tp <x> <z>             e.g. Bob tp 100 200\n"
-"  <player> tp <x> <y> <z>         (with height)\n"
+"  heal <player>\n"
+"  godmode <player>                (toggle)\n"
+"  fly <player>                    (toggle)\n"
+"  invisible <player>              (toggle)\n"
+"  loadout <player>                (all weapons + explosives)\n"
+"  die <player>\n"
+"  tp <player> <x> <z>             e.g. tp Bob 100 200\n"
+"  tp <player> <x> <y> <z>         (with height)\n"
+"  mode <player> v|h|o|s|-v\n"
+"  m <player> <message>\n"
 "\n"
 "MODERATION\n"
 "  kick <player>\n"
@@ -244,16 +249,13 @@ const char* HELP_TEXT =
 "  ipban <player> [reason]\n"
 "  whitelist <player>\n"
 "  unwhitelist <player>\n"
-"  mode <player> <mode>\n"
-"  m <player> <message>\n"
 "\n"
 "WORLD / SERVER\n"
+"  say <message>                   broadcast a chat message to everyone\n"
 "  save                            save the world now\n"
 "  shutdown                        stop the server (auto-restarts if start.bat loops)\n"
 "  motd <text>                     set the message of the day\n"
-"  me <text>                       emote in chat\n"
-"\n"
-"Tip: type a command with no name (e.g. \"money 1000\") and it acts on YOU.";
+"  me <text>                       emote in chat";
 
 bool isVtCommand(const std::string& c) {
     static const char* CMDS[] = {
@@ -263,7 +265,7 @@ bool isVtCommand(const std::string& c) {
         "fly","reputation","exp","motd","loadout","assignmission","eliminate","annex",
         "yesman","ftick","specialbuild","heal","godmode","nofuzz","dungeonspawn",
         "revealdungeons","status","s","winmissions","marks","invisible","ddebug",
-        "shutdown","stop","help","commands","?", NULL };
+        "shutdown","stop","say","announce","broadcast","help","commands","?", NULL };
     for (int i = 0; CMDS[i]; i++) if (c == CMDS[i]) return true;
     return false;
 }
@@ -303,38 +305,72 @@ bool resolvePlayer(const std::string& token, PlayerInfo& out) {
     return false;
 }
 
-// Returns true and fills `reply` if handled locally (help/errors). Otherwise mutates
-// args (command / asGameId) and returns false to forward to the game.
+// Commands whose 2nd token is a target player.
+bool isPlayerArgCmd(const std::string& c) {
+    static const char* P[] = {"money","credits","give","giveinf","heal","reputation","exp",
+        "marks","loadout","fly","godmode","invisible","die","tp","m","mode","kick",
+        "ban","unban","ipban","whitelist","unwhitelist", NULL};
+    for (int i = 0; P[i]; i++) if (c == P[i]) return true;
+    return false;
+}
+// Moderation commands whose target may be OFFLINE (resolve may fail -> pass raw name).
+bool isOfflineOkCmd(const std::string& c) {
+    static const char* O[] = {"ban","unban","ipban","whitelist","unwhitelist", NULL};
+    for (int i = 0; O[i]; i++) if (c == O[i]) return true;
+    return false;
+}
+
+// Syntax: <command> <player> <args>. Returns true + fills `reply` if handled locally
+// (help / errors). Otherwise rewrites args: command (player stripped) + asGameId/asPlayer,
+// and returns false to forward to the game.
 bool prepareConsole(json& args, json& reply) {
     std::string raw;
-    if (args.contains("command"))      raw = args["command"].get<std::string>();
+    if (args.contains("command"))         raw = args["command"].get<std::string>();
     else if (args.contains("rawCommand")) raw = args["rawCommand"].get<std::string>();
-    else if (args.contains("message")) raw = args["message"].get<std::string>();
+    else if (args.contains("message"))    raw = args["message"].get<std::string>();
     raw = trim(raw);
 
-    std::string firstWord = raw; size_t sp = raw.find_first_of(" \t");
-    if (sp != std::string::npos) firstWord = raw.substr(0, sp);
-    firstWord = lower(firstWord);
-    if (raw.empty() || firstWord == "help" || firstWord == "commands" || firstWord == "?") {
+    // First word = command.
+    std::string cmd, afterCmd;
+    size_t sp = raw.find_first_of(" \t");
+    if (sp == std::string::npos) { cmd = raw; afterCmd = ""; }
+    else { cmd = raw.substr(0, sp); afterCmd = trim(raw.substr(sp + 1)); }
+    std::string cmdl = lower(cmd);
+
+    if (raw.empty() || cmdl == "help" || cmdl == "commands" || cmdl == "?") {
         reply = json{{"success",true},{"rawResult",HELP_TEXT}};
         return true;
     }
+    if (!isVtCommand(cmdl)) {
+        reply = json{{"success",false},{"rawResult","Unknown command: '" + cmd + "'. Type 'help'."}};
+        return true;
+    }
+    if (!isPlayerArgCmd(cmdl)) {
+        args["command"] = raw;   // no-player command (save/motd/me/build tools) -> acts on admin
+        return false;
+    }
 
-    std::string first, rest; bool quoted;
-    parseFirstToken(raw, first, rest, quoted);
-    if (!quoted && isVtCommand(lower(first))) { args["command"] = raw; return false; }
+    // Player-arg command: the next token is the player (honour "quoted names").
+    std::string playerTok, argsRest; bool quoted;
+    parseFirstToken(afterCmd, playerTok, argsRest, quoted);
+    if (playerTok.empty()) {
+        reply = json{{"success",false},{"rawResult","Usage: " + cmdl + " <player> ..."}};
+        return true;
+    }
+    std::string newcmd = cmdl;
+    if (!argsRest.empty()) newcmd += " " + argsRest;
+    args["command"] = newcmd;
 
     PlayerInfo p;
-    if (!resolvePlayer(first, p)) {
-        reply = json{{"success",false},{"rawResult","Unknown command, or player not found: '" + first + "'. Type 'help'."}};
+    if (resolvePlayer(playerTok, p)) {
+        args["asGameId"] = p.gameId;
+        args["asPlayer"] = p.name;
+    } else if (isOfflineOkCmd(cmdl)) {
+        args["asPlayer"] = playerTok;   // offline-capable: pass the raw name through
+    } else {
+        reply = json{{"success",false},{"rawResult","Player not online: '" + playerTok + "'. Type 'help'."}};
         return true;
     }
-    if (rest.empty()) {
-        reply = json{{"success",false},{"rawResult","No command after player '" + p.name + "'. e.g. " + p.name + " money 1000"}};
-        return true;
-    }
-    args["command"]  = rest;
-    args["asGameId"] = p.gameId;
     return false;
 }
 
@@ -374,7 +410,12 @@ void handleRequest(const std::string& requestId, const json& payload) {
         return;
     }
     if (action == "getServerInfo") { sendResponse(requestId, json{{"name", IDENTITY_TOKEN.empty()?"VoxelTurf Server":IDENTITY_TOKEN},{"version","unknown"}}); return; }
-    if (action == "listBans" || action == "listItems" || action == "listEntities") { sendResponse(requestId, json::array()); return; }
+    if (action == "listItems") {
+        std::lock_guard<std::mutex> lk(g_itemsMutex);
+        sendResponse(requestId, g_itemsCache);
+        return;
+    }
+    if (action == "listBans" || action == "listEntities") { sendResponse(requestId, json::array()); return; }
 
     if (!isGameAction(action)) { sendResponse(requestId, json{{"success",false},{"error","Unsupported: " + action}}); return; }
 
@@ -479,6 +520,36 @@ void checkSave() {
     }
 }
 
+// Enumerate the item catalog ONCE at startup (the Lua returns it in batches; we stitch
+// them), cache it for listItems, and write items.json next to the config for visibility.
+void enumerateItems() {
+    json all = json::array();
+    std::map<std::string, bool> seenName;   // dedupe by code/name
+    long long start = 1;
+    for (int guard = 0; guard < 1000; guard++) {
+        json res = udpRequest(json{{"type","command"},{"action","listItems"},{"args",{{"start",start}}}});
+        if (!res.is_object() || !res.contains("result")) break;
+        json result = res["result"];
+        if (result.contains("probe") && result["probe"].is_string())
+            logmsg("listItems probe: " + result["probe"].get<std::string>());
+        if (result.contains("items") && result["items"].is_array())
+            for (auto& it : result["items"]) {
+                std::string code = it.value("code", "");
+                if (code.empty() || seenName.count(code)) continue;
+                seenName[code] = true;
+                all.push_back(it);
+            }
+        long long nextId = (result.contains("nextId") && result["nextId"].is_number()) ? result["nextId"].get<long long>() : 0;
+        if (nextId <= 0) break;
+        start = nextId;
+    }
+    { std::lock_guard<std::mutex> lk(g_itemsMutex); g_itemsCache = all; }
+    std::string path = g_gameDir + "\\mods\\TakaroConnector\\items.json";
+    FILE* f = fopen(path.c_str(), "wb");
+    if (f) { std::string s = all.dump(2); fwrite(s.data(), 1, s.size(), f); fclose(f); }
+    logmsg("Items enumerated: " + std::to_string(all.size()) + " -> items.json");
+}
+
 void waitForServer() {
     logmsg("Waiting for server to fully load (watching " + g_statusPath + ")...");
     while (g_running) {
@@ -581,6 +652,7 @@ void wsLoop() {
 void pollLoop() {
     waitForServer();
     Sleep(1000);
+    enumerateItems();   // build the item catalog once, now that the game is up
     long long lastSaveCheck = 0;
     while (g_running) {
         poll();
