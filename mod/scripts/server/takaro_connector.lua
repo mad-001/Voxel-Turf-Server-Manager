@@ -182,7 +182,7 @@ for _, c in ipairs({
     "fly","reputation","exp","motd","loadout","assignmission","eliminate","annex",
     "yesman","ftick","specialbuild","heal","godmode","nofuzz","dungeonspawn",
     "revealdungeons","status","s","winmissions","marks","invisible","ddebug",
-    "help","commands","?",
+    "shutdown","stop","help","commands","?",
 }) do VT_COMMANDS[c] = true end
 
 -- Find an online player by (case-insensitive) name — lets a console command be run
@@ -245,6 +245,7 @@ local function helpText()
         "",
         "WORLD / SERVER",
         "  save                            save the world now",
+        "  shutdown                        stop the server (auto-restarts if start.bat loops)",
         "  motd <text>                     set the message of the day",
         "  me <text>                       emote in chat",
         "",
@@ -421,6 +422,16 @@ DIRECT.motd = function(NH, P, argv)
     return true, "MOTD set: " .. str
 end
 
+-- shutdown/stop/exit: flag the server to shut down (the engine's `exit` command).
+-- If start.bat has an auto-restart loop this acts as a restart.
+DIRECT.shutdown = function(NH, P, argv)
+    NH:broadcastSM("Server shutting down (Takaro)...", turf.WorldObj.ALL_WORLDS)
+    NH:flagShutdown()
+    return true, "Server shutting down"
+end
+DIRECT.stop = DIRECT.shutdown
+DIRECT.exit = DIRECT.shutdown
+
 -- Commands that need an actual target player (self/state). Moderation + save/motd do not.
 local DIRECT_NEEDS_TARGET = {
     money=true, credits=true, give=true, giveinf=true, heal=true, reputation=true,
@@ -429,7 +440,14 @@ local DIRECT_NEEDS_TARGET = {
 
 local function handleCommand(NH, action, args, requestId)
     args = args or {}
-    if action == "sendMessage" then
+    if action == "shutdown" then
+        local ok = pcall(function()
+            NH:broadcastSM("Server shutting down (Takaro)...", turf.WorldObj.ALL_WORLDS)
+            NH:flagShutdown()
+        end)
+        return {requestId = requestId, result = {success = ok}}
+
+    elseif action == "sendMessage" then
         local ok = pcall(function() NH:broadcastSM("[Takaro] " .. (args.message or args.msg or ""), turf.WorldObj.ALL_WORLDS) end)
         return {requestId = requestId, result = {success = ok}}
 

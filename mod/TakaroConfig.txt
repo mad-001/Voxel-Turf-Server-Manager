@@ -31,9 +31,8 @@ ENABLED=true
 # 5. Download the latest release:
 #      https://github.com/mad-001/Voxel-Turf-Server-Manager/releases/latest
 #    Extract the ZIP straight into your Voxel Turf server folder. It adds:
-#      winmm.dll                                            (server root - starts the bridge)
+#      winmm.dll                                            (server root - the bridge, self-contained ~1MB)
 #      mods/TakaroConnector/TakaroConfig.txt                (this file)
-#      mods/TakaroConnector/bridge/bridge.exe               (the bridge - self-contained)
 #      mods/TakaroConnector/scripts/server_scripts.txt
 #      mods/TakaroConnector/scripts/server/takaro_connector.lua
 # 6. Edit mods/TakaroConnector/TakaroConfig.txt -> set SERVER_NAME and paste
