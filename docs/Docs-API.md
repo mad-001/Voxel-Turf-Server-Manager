@@ -139,11 +139,11 @@ struct chunkMinimapSamples {
 };
 ```
 
-### Open issue (dev, 2026-06-13)
-> "The only issue currently is that the **server does not have the texture information.**
-> I need to **precompile the minimap textures using the client and feed the data file to
-> the server** — and where is that file?"
+### Minimap texture data file (dev, 2026-06-13)
+The minimap textures must be **precompiled on the client** and fed to the server as a data
+file before `sampleMinimapTextures()` returns real colours server-side.
 
-So minimap textures need to be **precompiled on the client** and shipped to the server as
-a data file before `sampleMinimapTextures()` returns real colours server-side. (The
-location of that precompiled texture data file is still TBD.)
+> **The file is `settings/minimap_colours.dat`** — it holds the precompiled minimap colours.
+
+So to build a server-side minimap: ensure `settings/minimap_colours.dat` is present, then
+use `sampleMinimapTextures()` (colours) shaded by `sampleHeight()`.
